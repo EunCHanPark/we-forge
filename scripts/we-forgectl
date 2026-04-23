@@ -68,8 +68,55 @@ TASK_NAME_WINDOWS    = "we-forge"
 # Legacy LaunchAgent labels we know about — for migration
 LEGACY_LABELS_MACOS = ["com.yukibana.we-forge-tick"]
 
-# Daemon polling interval (seconds)
-DAEMON_INTERVAL = int(os.environ.get("WE_FORGE_DAEMON_INTERVAL", "300"))  # 5 min
+# Daemon cadence — single source of truth
+#
+# Resolution order (first non-zero wins):
+#   1. config.json "interval_minutes" field (set via `we-forgectl set-interval`)
+#   2. WE_FORGE_DAEMON_INTERVAL env var (legacy, in seconds)
+#   3. Default: 720 minutes (12 hours, fires at local 00:00 and 12:00)
+#
+# Tick scheduling is **aligned to local midnight** (00:00 in the system's local
+# timezone). For interval=720min the slots are 00:00 and 12:00. For
+# interval=30min the slots are 00:00, 00:30, ..., 23:30 (48 slots/day).
+#
+# The daemon re-reads this on every loop iteration so `set-interval` takes
+# effect without a daemon restart.
+DAEMON_INTERVAL_DEFAULT_MIN = 720  # 12 hours
+
+def get_daemon_interval_seconds() -> int:
+    """Resolve the daemon interval in seconds, hot-reloading from config."""
+    try:
+        cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        m = int(cfg.get("interval_minutes") or 0)
+        if m > 0:
+            return m * 60
+    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+        pass
+    env = int(os.environ.get("WE_FORGE_DAEMON_INTERVAL", "0") or 0)
+    if env > 0:
+        return env
+    return DAEMON_INTERVAL_DEFAULT_MIN * 60
+
+def next_aligned_tick_time(interval_sec: int, after: float) -> float:
+    """Compute the next tick timestamp strictly AFTER `after`, aligned to
+    local 00:00. Returns a Unix epoch float in the local timezone.
+
+    interval_sec: tick cadence (seconds)
+    after:        unix timestamp; the returned slot is > after
+    """
+    import datetime as _dt
+    after_dt = _dt.datetime.fromtimestamp(after)  # local time
+    midnight = after_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    sec_since_midnight = (after_dt - midnight).total_seconds()
+    # Strictly-next slot index (slot 0 = 00:00, slot 1 = +interval, etc.)
+    next_slot_idx = int(sec_since_midnight // interval_sec) + 1
+    next_slot_sec = next_slot_idx * interval_sec
+    if next_slot_sec >= 86400:
+        # Wrap to tomorrow's 00:00 + 0 (the first slot of tomorrow)
+        target_dt = midnight + _dt.timedelta(days=1)
+    else:
+        target_dt = midnight + _dt.timedelta(seconds=next_slot_sec)
+    return target_dt.timestamp()
 
 # ----------------------------------------------------------------------------
 # Output helpers
@@ -515,7 +562,10 @@ class TelegramNotifier:
 
     def handle_command(self, cmd: str) -> str:
         """Dispatch /commands. Returns response text."""
-        cmd = cmd.strip().lower().split("@")[0]
+        raw = cmd.strip()
+        head = raw.split()[0].lower().split("@")[0] if raw else ""
+        rest = raw[len(head):].strip()
+        cmd = head
         if cmd in ("/skill_report", "/report"):
             return self._cmd_report()
         if cmd in ("/dashboard", "/dash"):
@@ -526,6 +576,10 @@ class TelegramNotifier:
             return self._cmd_status()
         if cmd in ("/ecc_trace", "/ecc"):
             return self._cmd_ecc_trace()
+        if cmd in ("/interval",):
+            return self._cmd_interval()
+        if cmd in ("/set_interval", "/setinterval"):
+            return self._cmd_set_interval(rest)
         if cmd in ("/help", "/start"):
             return (
                 "we-forge 봇 명령어 안내\n"
@@ -554,6 +608,15 @@ class TelegramNotifier:
                 "  웹 대시보드 접속 안내\n"
                 "  - http://127.0.0.1:8765 (KPI + 차트 시각화)\n"
                 "  - 또는 we-forgectl tui (터미널 인터페이스)\n"
+                "\n"
+                "▸ /interval\n"
+                "  학습 + 알림 주기 조회\n"
+                "  - 현재 cadence (분/초), 기본값 사용 여부\n"
+                "\n"
+                "▸ /set_interval <분>\n"
+                "  학습 + 알림 주기 설정 (1 ~ 1440)\n"
+                "  - 예: /set_interval 30 → 30분마다\n"
+                "  - 다음 daemon 사이클부터 자동 적용 (재시작 불필요)\n"
                 "\n"
                 "▸ /help\n"
                 "  이 도움말 (지금 보고 있는 화면)\n"
@@ -616,6 +679,59 @@ class TelegramNotifier:
                 f"mode: {cfg.get('mode', 'scheduled')}\n"
                 f"telegram: {'enabled' if cfg.get('telegram_enabled') else 'disabled'}")
 
+    def _cmd_interval(self) -> str:
+        import datetime as _dt
+        sec = get_daemon_interval_seconds()
+        cfg = load_config()
+        explicit = cfg.get("interval_minutes")
+        line2 = (f"  설정값: {explicit}분  (config.json)" if explicit
+                 else f"  설정값: 미지정 → 기본값 {DAEMON_INTERVAL_DEFAULT_MIN}분 사용 중")
+        next_ts = next_aligned_tick_time(sec, time.time())
+        next_local = _dt.datetime.fromtimestamp(next_ts).strftime("%Y-%m-%d %H:%M")
+        return ("we-forge cadence\n"
+                "══════════════════════════════\n"
+                f"  현재: {sec // 60}분  ({sec}초)\n"
+                f"{line2}\n"
+                f"  다음 발화: {next_local}  (로컬 00:00 기준 정렬)\n"
+                "  의미: tick(학습) + telegram 알림이 같은 주기로 발화\n\n"
+                "변경: /set_interval <분>  (예: /set_interval 30)\n"
+                "범위: 1 ~ 1440 (1분 ~ 24시간)\n"
+                "참고: 모든 슬롯은 자정(00:00) 기준 정렬됨")
+
+    def _cmd_set_interval(self, arg: str) -> str:
+        if not arg:
+            return ("사용법: /set_interval <분>\n"
+                    "예: /set_interval 30   (30분마다)\n"
+                    "    /set_interval 60   (1시간마다, 기본값)\n"
+                    "    /set_interval 5    (5분마다, 빈번)\n"
+                    "범위: 1 ~ 1440 (1분 ~ 24시간)\n"
+                    "현재값 조회: /interval")
+        try:
+            minutes = int(arg.split()[0])
+        except (ValueError, IndexError):
+            return f"잘못된 입력: '{arg}'\n정수(분)를 입력하세요. 예: /set_interval 30"
+        if minutes < 1 or minutes > 1440:
+            return f"범위 초과: {minutes}분\n허용 범위: 1 ~ 1440 (1분 ~ 24시간)"
+        cfg = load_config()
+        old = cfg.get("interval_minutes") or DAEMON_INTERVAL_DEFAULT_MIN
+        cfg["interval_minutes"] = minutes
+        save_config(cfg)
+        # Reset throttle state so the new cadence applies on next tick.
+        try:
+            (WE_FORGE_HOME / "last_telegram_sent_at").unlink(missing_ok=True)
+            (WE_FORGE_HOME / "telegram_pending.jsonl").unlink(missing_ok=True)
+        except OSError:
+            pass
+        cmd_ecc_log("enterprise-agent-ops",
+                    f"interval changed via telegram bot ({old}→{minutes} min)",
+                    invoker="bot")
+        return ("⚙️ interval 변경 완료\n"
+                "══════════════════════════════\n"
+                f"  이전: {old}분\n"
+                f"  현재: {minutes}분\n"
+                f"  적용: 다음 daemon iteration (최대 60초 내, 재시작 불필요)\n"
+                f"  효과: tick {minutes}분마다 · telegram 알림 {minutes}분마다")
+
     def _cmd_ecc_trace(self) -> str:
         if not ECC_TRACE_FILE.exists():
             return "no ECC trace yet — agent will populate as it leverages skills"
@@ -665,32 +781,46 @@ def daemon_loop() -> int:
 
     WE_FORGE_HOME.mkdir(parents=True, exist_ok=True)
     DAEMON_PID.write_text(str(os.getpid()), encoding="utf-8")
-    print(f"[{now_iso()}] we-forge daemon starting (pid={os.getpid()}, interval={DAEMON_INTERVAL}s)")
+    initial_interval = get_daemon_interval_seconds()
+    next_tick_at = next_aligned_tick_time(initial_interval, time.time())
+    import datetime as _dt
+    next_local = _dt.datetime.fromtimestamp(next_tick_at).strftime("%Y-%m-%d %H:%M %Z")
+    print(f"[{now_iso()}] we-forge daemon starting (pid={os.getpid()}, "
+          f"interval={initial_interval}s = {initial_interval//60}min, "
+          f"next aligned tick: {next_local.strip()})")
     notifier = get_notifier()
     if notifier:
         print(f"[{now_iso()}] Telegram notifier enabled")
         notifier.send("🔧 we-forge daemon started")
 
-    # Initialize last_tick to NOW so first iteration polls Telegram instead of
-    # running a tick. Otherwise the first tick (which can take up to 10 min via
-    # `claude --agent we-forge -p tick`) blocks Telegram polling and the bot
-    # appears unresponsive on startup.
-    last_tick = time.time()
+    last_interval = initial_interval
 
     try:
         while True:
             now = time.time()
-            if now - last_tick >= DAEMON_INTERVAL:
-                print(f"[{now_iso()}] tick begin")
-                # Run tick in background thread so Telegram polling doesn't block.
-                # Tick takes 0–10 min; we want bot responsive throughout.
+            # Hot-reload: re-read config every iteration so `set-interval`
+            # takes effect without daemon restart.
+            current_interval = get_daemon_interval_seconds()
+            # If interval changed via set-interval, re-anchor next slot from now.
+            if current_interval != last_interval:
+                next_tick_at = next_aligned_tick_time(current_interval, now)
+                last_interval = current_interval
+                next_local = _dt.datetime.fromtimestamp(next_tick_at).strftime("%H:%M")
+                print(f"[{now_iso()}] interval changed → {current_interval//60}min, "
+                      f"next aligned tick: {next_local}")
+
+            if now >= next_tick_at:
+                print(f"[{now_iso()}] tick begin (aligned slot)")
                 import threading
                 tick_thread = threading.Thread(
                     target=lambda: print(f"[{now_iso()}] tick end (rc={run_tick_once()})"),
                     daemon=True,
                 )
                 tick_thread.start()
-                last_tick = now
+                # Schedule next aligned slot strictly after now.
+                next_tick_at = next_aligned_tick_time(current_interval, time.time())
+                next_local = _dt.datetime.fromtimestamp(next_tick_at).strftime("%H:%M")
+                print(f"[{now_iso()}] next aligned tick: {next_local}")
 
             if notifier:
                 updates = notifier.poll(timeout=25)
@@ -705,7 +835,7 @@ def daemon_loop() -> int:
                         reply = notifier.handle_command(text)
                         notifier.send(reply)
             else:
-                sleep_for = max(1, int(DAEMON_INTERVAL - (time.time() - last_tick)))
+                sleep_for = max(1, int(next_tick_at - time.time()))
                 time.sleep(min(60, sleep_for))
     except KeyboardInterrupt:
         print(f"[{now_iso()}] daemon stopped (KeyboardInterrupt)")
@@ -930,16 +1060,65 @@ def cmd_uninstall(deep: bool) -> int:
     return 0
 
 def cmd_status() -> int:
+    import datetime as _dt
     m   = manager()
     s   = m.status()
     cfg = load_config()
+    interval_sec = get_daemon_interval_seconds()
+    next_ts = next_aligned_tick_time(interval_sec, time.time())
+    next_local = _dt.datetime.fromtimestamp(next_ts).strftime("%Y-%m-%d %H:%M")
     color = {"running":GREEN, "stopped":YELLOW, "not-installed":RED}.get(s, "")
     print(f"  status:   {color}{s}{RESET}")
     print(f"  mode:     {cfg.get('mode', 'scheduled')}")
+    print(f"  interval: {interval_sec // 60} min  ({interval_sec}s — learning + telegram, aligned to 00:00)")
+    print(f"  next tick: {next_local}")
     print(f"  telegram: {'enabled' if cfg.get('telegram_enabled') else 'disabled'}")
     print(f"  os:       {detect_os()}{' (WSL)' if is_wsl() else ''}")
     print(f"  config:   {CONFIG_FILE}")
     return 0 if s == "running" else 1
+
+def cmd_set_interval(minutes: int) -> int:
+    """Set the unified tick + telegram cadence (minutes). Hot-reloaded by daemon."""
+    if minutes < 1:
+        err("interval must be >= 1 minute")
+        return 2
+    if minutes > 1440:
+        err("interval must be <= 1440 minutes (24 hours)")
+        return 2
+    cfg = load_config()
+    old = cfg.get("interval_minutes", DAEMON_INTERVAL_DEFAULT_MIN)
+    cfg["interval_minutes"] = minutes
+    save_config(cfg)
+    ok(f"interval: {old} min → {minutes} min")
+    print(f"  config:   {CONFIG_FILE}")
+    print(f"  effect:   tick every {minutes} min · telegram notify every {minutes} min")
+    print(f"  applies:  next iteration of running daemon (no restart needed — hot-reload)")
+    # Also reset telegram throttle state so next tick uses new cadence cleanly.
+    last_sent = WE_FORGE_HOME / "last_telegram_sent_at"
+    pending   = WE_FORGE_HOME / "telegram_pending.jsonl"
+    try:
+        if last_sent.exists(): last_sent.unlink()
+        if pending.exists():   pending.unlink()
+        ok("telegram throttle state reset (will fire on next tick with results)")
+    except OSError as e:
+        warn(f"telegram throttle reset skipped: {e}")
+    try:
+        from urllib import request as _req, parse as _parse
+        if cfg.get("telegram_enabled") and cfg.get("telegram_token") and cfg.get("telegram_chat_id"):
+            payload = _parse.urlencode({
+                "chat_id": cfg["telegram_chat_id"],
+                "text":    f"⚙️ we-forge interval: {old}min → {minutes}min (hot-reload)",
+            }).encode()
+            _req.urlopen(
+                f"https://api.telegram.org/bot{cfg['telegram_token']}/sendMessage",
+                data=payload, timeout=10,
+            )
+            ok("telegram notified of interval change")
+    except Exception as e:
+        warn(f"telegram notify skipped: {e}")
+    cmd_ecc_log("enterprise-agent-ops",
+                f"interval changed via set-interval ({old}→{minutes} min)", invoker="cli")
+    return 0
 
 def cmd_logs(n: int) -> int:
     log_candidates = [
@@ -1059,6 +1238,11 @@ def main() -> int:
     p_logs = sp.add_parser("logs", help="tail recent service logs")
     p_logs.add_argument("-n", type=int, default=30)
 
+    p_setint = sp.add_parser("set-interval",
+        help="set unified tick + telegram cadence in minutes (default 60)")
+    p_setint.add_argument("minutes", type=int,
+                          help="cadence in minutes (1-1440)")
+
     p_ecc_log = sp.add_parser("ecc-log",
         help="record one ECC marketplace skill usage (appends to ecc-trace.jsonl)")
     p_ecc_log.add_argument("skill",  help="ECC skill slug (e.g. autonomous-agent-harness)")
@@ -1085,6 +1269,7 @@ def main() -> int:
         if args.cmd == "stop":         manager().stop();    return 0
         if args.cmd == "restart":      manager().restart(); return 0
         if args.cmd == "status":       return cmd_status()
+        if args.cmd == "set-interval": return cmd_set_interval(args.minutes)
         if args.cmd in ("run", "daemon"): return daemon_loop()
         if args.cmd == "run-once":     return run_tick_once()
         if args.cmd == "tui":          return tui()

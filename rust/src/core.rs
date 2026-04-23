@@ -116,6 +116,45 @@ pub mod config {
         pub telegram_enabled: bool,
         pub telegram_token:   String,
         pub telegram_chat_id: String,
+        // Unified tick + telegram cadence (minutes). 0 → use DEFAULT_INTERVAL_MIN.
+        // Hot-reloaded by daemon on every loop iteration.
+        #[serde(default)]
+        pub interval_minutes: u32,
+    }
+
+    /// Default cadence in minutes when config.interval_minutes is unset/0.
+    /// 720 = 12 hours → fires at local 00:00 and 12:00 by default.
+    pub const DEFAULT_INTERVAL_MIN: u32 = 720;
+
+    /// Resolve the active cadence in seconds. Single source of truth used by
+    /// both daemon (tick) and Telegram notification step.
+    pub fn interval_seconds(cfg: &Config) -> u64 {
+        let m = if cfg.interval_minutes == 0 { DEFAULT_INTERVAL_MIN } else { cfg.interval_minutes };
+        m as u64 * 60
+    }
+
+    /// Compute the next tick time strictly AFTER `after`, aligned to local
+    /// midnight (00:00 in the system's local timezone).
+    ///
+    /// For interval=720min the slots are 00:00 and 12:00.
+    /// For interval=30min  the slots are 00:00, 00:30, ..., 23:30 (48/day).
+    pub fn next_aligned_tick_time(
+        interval_sec: u64,
+        after: chrono::DateTime<chrono::Local>,
+    ) -> chrono::DateTime<chrono::Local> {
+        use chrono::{Datelike, Duration, TimeZone};
+        let midnight = chrono::Local
+            .with_ymd_and_hms(after.year(), after.month(), after.day(), 0, 0, 0)
+            .single()
+            .expect("local midnight always exists");
+        let sec_since_midnight = (after - midnight).num_seconds().max(0) as u64;
+        let next_slot_idx = sec_since_midnight / interval_sec + 1;
+        let next_slot_sec = next_slot_idx * interval_sec;
+        if next_slot_sec >= 86400 {
+            midnight + Duration::days(1)
+        } else {
+            midnight + Duration::seconds(next_slot_sec as i64)
+        }
     }
 
     pub fn load() -> Config {

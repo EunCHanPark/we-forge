@@ -54,6 +54,12 @@ enum Cmd {
     /// Show service status.
     Status,
 
+    /// Set unified tick + telegram cadence (minutes, 1-1440).
+    SetInterval {
+        /// Cadence in minutes (1-1440).
+        minutes: u32,
+    },
+
     /// Long-running loop (called by service manager).
     Daemon,
     /// Run a single tick and exit (called by scheduled mode).
@@ -117,6 +123,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Stop => cli::lifecycle::stop(),
         Cmd::Restart => cli::lifecycle::restart(),
         Cmd::Status => cli::status::run(),
+        Cmd::SetInterval { minutes } => cli::set_interval::run(minutes),
         Cmd::Daemon => {
             // Build a tokio runtime here so the rest of the CLI stays sync.
             tokio::runtime::Builder::new_multi_thread()

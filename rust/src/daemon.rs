@@ -19,15 +19,17 @@ use anyhow::Result;
 use serde::Deserialize;
 use std::time::Duration;
 
-const DAEMON_INTERVAL_SECS: u64 = 300; // 5 min
+// Daemon interval now resolved per-iteration via config::interval_seconds()
+// for hot-reload. The Python CLI ships `set-interval` to mutate it.
 
 /// Async daemon entry point. Runs forever (or until Ctrl-C).
 pub async fn run() -> Result<()> {
     let pid = std::process::id();
-    println!("[{}] we-forge daemon starting (pid={pid}, interval={DAEMON_INTERVAL_SECS}s)",
-             now_iso());
-
     let cfg = config::with_env_overrides(config::load());
+    let initial_secs = config::interval_seconds(&cfg);
+    println!("[{}] we-forge daemon starting (pid={pid}, interval={initial_secs}s = {}min)",
+             now_iso(), initial_secs / 60);
+
     let notifier = if cfg.telegram_enabled
         && !cfg.telegram_token.is_empty()
         && !cfg.telegram_chat_id.is_empty()
@@ -45,14 +47,14 @@ pub async fn run() -> Result<()> {
                      "daemon loop started (tokio::select! parallel tick + telegram)",
                      "daemon");
 
-    // Initialize last_tick to NOW so first iteration polls Telegram (if enabled)
-    // immediately instead of running a 10-min-blocking tick on startup.
-    let mut last_tick_at = std::time::Instant::now();
-
-    // Tick scheduling via interval (next firing in DAEMON_INTERVAL_SECS).
-    let mut tick_interval = tokio::time::interval(Duration::from_secs(DAEMON_INTERVAL_SECS));
-    tick_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    tick_interval.tick().await; // burn the immediate-fire tick
+    // Tick scheduling — aligned to local 00:00 (midnight) every interval slots.
+    // For interval=720min: slots at 00:00 and 12:00.
+    // For interval=30min:  slots at 00:00, 00:30, ..., 23:30.
+    let mut current_secs = initial_secs;
+    let mut next_tick_at = config::next_aligned_tick_time(current_secs, chrono::Local::now());
+    println!("[{}] next aligned tick: {}",
+             now_iso(),
+             next_tick_at.format("%Y-%m-%d %H:%M %Z"));
 
     // Telegram poll offset
     let mut update_offset: i64 = 0;
@@ -63,14 +65,35 @@ pub async fn run() -> Result<()> {
     tokio::pin!(sigterm_fut);
 
     loop {
+        // Hot-reload interval from config (catches `set-interval` changes).
+        let cfg_now = config::with_env_overrides(config::load());
+        let want_secs = config::interval_seconds(&cfg_now);
+        if want_secs != current_secs {
+            current_secs = want_secs;
+            next_tick_at = config::next_aligned_tick_time(current_secs, chrono::Local::now());
+            println!("[{}] interval changed → {}min, next aligned tick: {}",
+                     now_iso(), current_secs / 60,
+                     next_tick_at.format("%H:%M"));
+        }
+
+        let now_local = chrono::Local::now();
+        let until_next = (next_tick_at - now_local).num_seconds().max(1) as u64;
+        let tick_sleep = tokio::time::sleep(Duration::from_secs(until_next.min(60)));
+        tokio::pin!(tick_sleep);
+
         tokio::select! {
-            _ = tick_interval.tick() => {
-                println!("[{}] tick begin", now_iso());
-                tokio::spawn(async {
-                    let rc = tick::run_once_async().await;
-                    println!("[{}] tick end (rc={})", now_iso(), rc);
-                });
-                last_tick_at = std::time::Instant::now();
+            _ = &mut tick_sleep => {
+                if chrono::Local::now() >= next_tick_at {
+                    println!("[{}] tick begin (aligned slot {})",
+                             now_iso(), next_tick_at.format("%H:%M"));
+                    tokio::spawn(async {
+                        let rc = tick::run_once_async().await;
+                        println!("[{}] tick end (rc={})", now_iso(), rc);
+                    });
+                    next_tick_at = config::next_aligned_tick_time(current_secs, chrono::Local::now());
+                    println!("[{}] next aligned tick: {}",
+                             now_iso(), next_tick_at.format("%H:%M"));
+                }
             }
 
             updates = telegram::poll_if_enabled(&notifier, update_offset) => {
@@ -102,7 +125,6 @@ pub async fn run() -> Result<()> {
                     let _ = n.send("we-forge daemon stopped", false).await;
                 }
                 let _ = std::fs::remove_file(paths::daemon_pid());
-                let _ = last_tick_at; // suppress unused warn
                 return Ok(());
             }
         }
@@ -275,16 +297,21 @@ pub mod telegram {
 
         /// Dispatch /commands — matches Python word-for-word.
         pub fn handle_command(&self, raw: &str) -> String {
-            let cmd = raw.trim().to_lowercase();
-            let cmd = cmd.split('@').next().unwrap_or(&cmd);
-            match cmd {
+            let trimmed = raw.trim();
+            let mut parts = trimmed.splitn(2, char::is_whitespace);
+            let head_raw = parts.next().unwrap_or("").to_lowercase();
+            let head = head_raw.split('@').next().unwrap_or(&head_raw).to_string();
+            let rest = parts.next().unwrap_or("").trim().to_string();
+            match head.as_str() {
                 "/help" | "/start" => help_text(),
                 "/status" | "/health" => self.cmd_status(),
                 "/skill_report" | "/report" => self.cmd_skill_report(),
                 "/last_tick" | "/last" => cmd_last_tick(),
                 "/dashboard" | "/dash" => cmd_dashboard(),
                 "/ecc_trace" | "/ecc" => cmd_ecc_trace(),
-                _ => format!("unknown command: {}\nsend /help for the full list", cmd),
+                "/interval" => cmd_interval(),
+                "/set_interval" | "/setinterval" => cmd_set_interval(&rest),
+                _ => format!("unknown command: {}\nsend /help for the full list", head),
             }
         }
 
@@ -329,9 +356,73 @@ pub mod telegram {
          ▸ /last_tick\n  최근 tick(학습 사이클) 로그 마지막 15줄\n\n\
          ▸ /ecc_trace\n  ECC 마켓플레이스 스킬 사용 통계\n\n\
          ▸ /dashboard\n  웹 대시보드 접속 안내\n\n\
+         ▸ /interval\n  학습 + 알림 주기 조회 (현재 cadence)\n\n\
+         ▸ /set_interval <분>\n  학습 + 알림 주기 설정 (1 ~ 1440)\n  - 예: /set_interval 30 → 30분마다\n  - 다음 daemon 사이클부터 자동 적용\n\n\
          ▸ /help\n  이 도움말\n\n\
          ──────────────────────────────\n\
          we-forge 는 무엇인가\n  · Claude Code 위에서 24/7 패턴 학습 데몬\n  · 사용자 작업을 관찰하고 ECC 마켓플레이스 스킬과 매칭\n  · 매칭 시 추천, 미매칭 시 신규 합성".to_string()
+    }
+
+    fn cmd_interval() -> String {
+        let cfg = config::with_env_overrides(config::load());
+        let sec = config::interval_seconds(&cfg);
+        let line2 = if cfg.interval_minutes > 0 {
+            format!("  설정값: {}분  (config.json)", cfg.interval_minutes)
+        } else {
+            format!("  설정값: 미지정 → 기본값 {}분 사용 중", config::DEFAULT_INTERVAL_MIN)
+        };
+        let next = config::next_aligned_tick_time(sec, chrono::Local::now());
+        format!(
+            "we-forge cadence\n\
+             ══════════════════════════════\n\
+               현재: {}분  ({}초)\n\
+             {}\n\
+               다음 발화: {}  (로컬 00:00 기준 정렬)\n\
+               의미: tick(학습) + telegram 알림이 같은 주기로 발화\n\n\
+             변경: /set_interval <분>  (예: /set_interval 30)\n\
+             범위: 1 ~ 1440 (1분 ~ 24시간)\n\
+             참고: 모든 슬롯은 자정(00:00) 기준 정렬됨",
+            sec / 60, sec, line2,
+            next.format("%Y-%m-%d %H:%M"),
+        )
+    }
+
+    fn cmd_set_interval(arg: &str) -> String {
+        if arg.is_empty() {
+            return "사용법: /set_interval <분>\n\
+                    예: /set_interval 30   (30분마다)\n    \
+                        /set_interval 60   (1시간마다, 기본값)\n    \
+                        /set_interval 5    (5분마다, 빈번)\n\
+                    범위: 1 ~ 1440 (1분 ~ 24시간)\n\
+                    현재값 조회: /interval".to_string();
+        }
+        let first = arg.split_whitespace().next().unwrap_or("");
+        let minutes: u32 = match first.parse() {
+            Ok(n) => n,
+            Err(_) => return format!("잘못된 입력: '{}'\n정수(분)를 입력하세요. 예: /set_interval 30", first),
+        };
+        if minutes < 1 || minutes > 1440 {
+            return format!("범위 초과: {}분\n허용 범위: 1 ~ 1440 (1분 ~ 24시간)", minutes);
+        }
+        let mut cfg = config::with_env_overrides(config::load());
+        let old = if cfg.interval_minutes == 0 { config::DEFAULT_INTERVAL_MIN } else { cfg.interval_minutes };
+        cfg.interval_minutes = minutes;
+        if let Err(e) = config::save(&cfg) {
+            return format!("config 저장 실패: {}", e);
+        }
+        let _ = std::fs::remove_file(paths::we_forge_home().join("last_telegram_sent_at"));
+        let _ = std::fs::remove_file(paths::we_forge_home().join("telegram_pending.jsonl"));
+        let _ = ecc::log("enterprise-agent-ops",
+            &format!("interval changed via telegram bot ({}→{} min)", old, minutes), "bot");
+        format!(
+            "⚙️ interval 변경 완료\n\
+             ══════════════════════════════\n  \
+               이전: {}분\n  \
+               현재: {}분\n  \
+               적용: 다음 daemon iteration (최대 60초 내, 재시작 불필요)\n  \
+               효과: tick {}분마다 · telegram 알림 {}분마다",
+            old, minutes, minutes, minutes,
+        )
     }
 
     fn cmd_last_tick() -> String {

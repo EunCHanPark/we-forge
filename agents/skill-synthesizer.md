@@ -26,7 +26,25 @@ A single JSON object:
 
 ## Output
 
-Write two files **only** under `~/.claude/skills/learned/pending/<slug>/`:
+Write two files **only** under `~/.claude/skills/learned/pending/<slug>/` (canonical path).
+
+### Staging fallback (permission block)
+
+If Write to the canonical path fails (typically because the headless tick was
+invoked without `--dangerously-skip-permissions`), retry under the always-writable
+staging area:
+
+```
+~/.claude/agent-memory/we-forge/staging/<slug>/SKILL.md
+~/.claude/agent-memory/we-forge/staging/<slug>/meta.json
+```
+
+When using the staging path, **add `"staging":true` to meta.json** so the we-forge
+orchestrator knows to emit an install hint to `~/.we-forge/install-pending.sh`.
+
+---
+
+Canonical-path output schema:
 
 ### SKILL.md
 YAML frontmatter + markdown body:
@@ -68,9 +86,9 @@ higher, a broken draft loops forever.
 
 ## Rules
 
-- **Scoped writes only.** You may Write to
-  `~/.claude/skills/learned/pending/<slug>/SKILL.md` and
-  `~/.claude/skills/learned/pending/<slug>/meta.json`.
+- **Scoped writes only.** You may Write to:
+  - canonical: `~/.claude/skills/learned/pending/<slug>/SKILL.md` and `meta.json`
+  - staging fallback: `~/.claude/agent-memory/we-forge/staging/<slug>/SKILL.md` and `meta.json` (only if canonical Write fails)
   Nothing else. Never touch `~/.claude/skills/learned/<slug>/` directly —
   that path is the auditor's exclusive domain.
 - **Do not leak secrets.** If any `sample` looks like a key/token/password,

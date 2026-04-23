@@ -6,6 +6,66 @@ All notable changes to we-forge are documented in this file. Format follows
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-04-24
+
+we-forge agent v2 — production-ready learning loop with full audit trail,
+zero-spend short-circuits, midnight-aligned scheduling, and remote
+configuration via Telegram bot.
+
+### Highlights
+
+- **Agent v2 with 11-step workflow** (`agents/we-forge.md`). Five-verdict
+  vocabulary (`PASS / REVISE / REJECT / ECC_MATCH / DROP`), full ledger
+  schema for every decision, ECC alignment disclosure as a mandatory rule.
+- **Ledger writes for every decision** (`~/.claude/learning/data/ledger.jsonl`).
+  Was 0 bytes pre-v0.4.0 — now records every PASS/REVISE/REJECT/ECC_MATCH/DROP
+  with full context (auditor score, ECC skill name, primitive class, etc.).
+- **Primitive auto-blocklist** prevents the agent from re-evaluating shell
+  primitives (`bash-grep-*`, `bash-cat-*`, `bash-find-*`, `bash-wc-*`,
+  `bash-ls-*`, `bash-python3-c-*`, `read/write/edit-path-*`, `glob-str`,
+  task-ops sub-patterns) — pre-populated 14 regex patterns in MEMORY.md.
+- **Self-reference filter** drops patterns whose samples reference
+  `~/.claude/learning/` paths (the observer effect: agent inspecting its
+  own data).
+- **`set-interval <minutes>` CLI** (Python + Rust). Single source of truth
+  for tick + Telegram cadence. Hot-reloaded by daemon (no restart needed).
+- **`/interval` and `/set_interval <분>` Telegram bot commands**.
+  Korean responses with input validation + reset of throttle state.
+- **Midnight-aligned tick scheduling.** Default 720 min (12 hours, fires at
+  local 00:00 and 12:00). Custom intervals align to local 00:00 — 30min
+  → 48 slots/day, 60min → 24 slots/day, etc.
+- **`--dangerously-skip-permissions` in tick.sh** — unblocks headless
+  writes to `~/.claude/learning/data/{ledger,promotion_queue}.jsonl` and
+  `~/.claude/skills/learned/`. Solves the persistent permission block
+  documented in MEMORY.md across ticks 1-19.
+- **Skill staging fallback** — when canonical skill path is blocked,
+  `skill-synthesizer` writes to `~/.claude/agent-memory/we-forge/staging/`
+  and orchestrator emits `~/.we-forge/install-pending.sh` install hint.
+- **Agent v2 Rust implementation** (`rust/src/{core,daemon,cli}.rs`):
+  byte-compatible `config.json` schema with new `interval_minutes:u32`
+  field, `next_aligned_tick_time()` using `chrono::Local`, hot-reload loop.
+
+### Live verification (this release)
+
+- Ledger: 0 → 1,700+ decisions (1,475 DROP + 225 ECC_MATCH)
+- Queue: 27 stale entries → 0 (atomic clear, every tick)
+- ECC alignment trace: 220+ marketplace skill leverages recorded
+- Telegram bot: 8 commands registered, all in Korean
+- `cargo check`: clean, 0 errors
+
+### Files changed (8)
+
+| Path | Change |
+|------|--------|
+| `agents/we-forge.md` | 151 → 272 lines (full agent v2 spec) |
+| `agents/skill-synthesizer.md` | +staging fallback contract |
+| `learning/tick.sh` | `--dangerously-skip-permissions` flag |
+| `scripts/we-forgectl` (Python) | `set-interval` cmd, alignment helpers, bot extensions |
+| `rust/src/core.rs` | `interval_minutes` field, `next_aligned_tick_time()` |
+| `rust/src/daemon.rs` | aligned scheduling loop + 2 new bot commands |
+| `rust/src/cli.rs` | `set_interval` module + status next-tick display |
+| `rust/src/main.rs` | clap `SetInterval` variant |
+
 ## [0.2.0] — 2026-04-23
 
 cokacctl/hermes-gateway pattern adoption — true daemon mode + auto-registration
