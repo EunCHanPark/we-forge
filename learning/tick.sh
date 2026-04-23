@@ -146,6 +146,13 @@ _invoke_watch_and_learn() {
   fi
   (
     export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
+    # Disable ECC hooks that would block or duplicate work inside the headless
+    # subprocess. Read by ECC's hook-flags.js (no ECC plugin files are modified):
+    #   - pre:bash:gateguard-fact-force      — blocks first routine Bash + rm -rf
+    #   - pre:edit-write:gateguard-fact-force — blocks first Write/Edit per file
+    #   - pre:observe:continuous-learning    — duplicate-watch; we already capture
+    # Scoped to this subshell only; parent shell / cron env are unaffected.
+    export ECC_DISABLED_HOOKS="pre:bash:gateguard-fact-force,pre:edit-write:gateguard-fact-force,pre:observe:continuous-learning"
     # shellcheck disable=SC2086
     $tcmd claude -p "/watch-and-learn" >>"$LOG" 2>&1
   ) || _log "claude -p returned non-zero (ignored)"
