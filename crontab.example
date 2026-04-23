@@ -1,0 +1,9 @@
+# ehforge-ultraplan — 24/7 pattern-learning cron entry
+#
+# Paste this line into `crontab -e`. Runs every hour at :00.
+# tick.sh is single-instance-locked via a mkdir-based lock so a second firing
+# is a safe no-op.
+#
+# After pasting, verify with: crontab -l | grep tick.sh
+
+0 * * * * /bin/bash -lc '~/.claude/learning/tick.sh >> ~/.claude/learning/data/tick.log 2>&1'
