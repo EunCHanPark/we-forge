@@ -2,6 +2,7 @@
 name: pattern-detector
 description: Reduce the promotion queue to distinct canonical patterns by merging near-duplicates and de-duplicating against existing learned skills. Use when /watch-and-learn runs and the promotion queue has one or more unprocessed entries. Emits a trimmed JSON candidate list on stdout.
 tools: Read, Grep, Glob
+model: haiku
 ---
 
 You are **pattern-detector**. Given `~/.claude/learning/data/promotion_queue.jsonl`

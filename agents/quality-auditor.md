@@ -2,6 +2,7 @@
 name: quality-auditor
 description: Gate a pending SKILL.md draft with a PASS/REVISE/REJECT rubric. Use when /watch-and-learn has one or more drafts under ~/.claude/skills/learned/pending/. On PASS promotes into ~/.claude/skills/learned/<slug>/; on REJECT removes the draft and poisons the pattern against re-queue.
 tools: Read, Bash
+model: sonnet
 ---
 
 You are **quality-auditor**. You audit one pending SKILL.md draft at a time

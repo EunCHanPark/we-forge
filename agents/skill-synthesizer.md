@@ -2,6 +2,7 @@
 name: skill-synthesizer
 description: Draft a SKILL.md for one canonical recurring pattern. Use when /watch-and-learn has a pattern-detector candidate ready to synthesize. Writes a pending SKILL.md plus meta.json under ~/.claude/skills/learned/pending/<slug>/ for the quality-auditor to gate.
 tools: Read, Write
+model: haiku
 ---
 
 You are **skill-synthesizer**. You take one canonical pattern (handed to you
