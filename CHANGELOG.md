@@ -6,6 +6,95 @@ All notable changes to we-forge are documented in this file. Format follows
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-04-23
+
+cokacctl/hermes-gateway pattern adoption — true daemon mode + auto-registration
++ unified CLI + optional Telegram bot.
+
+### Highlights
+
+- **One-line install, zero post-install steps.** `curl ... | bash` (or
+  `iwr ... | iex` on Windows) now auto-registers the launchd / systemd /
+  Task Scheduler service. The user never touches `crontab` or `launchctl`
+  directly.
+- **One-line uninstall with safety-backup.** `we-forgectl uninstall` stops
+  the service, removes the unit file, and moves config + data to
+  `~/.we-forge/backup/<ISO-timestamp>/` (never deletes — restore by `mv`).
+- **Optional Telegram daemon mode.** Opt in with `--enable-telegram` to get
+  a long-running daemon (`KeepAlive=true` / `Restart=always`) that polls
+  the Telegram Bot API for `/skill_report`, `/last_tick`, `/status`,
+  `/dashboard` commands and pushes alerts on key events.
+- **Unified service control via `we-forgectl`** — single Python file
+  implementing the cokacctl ServiceManager trait pattern. Subcommands:
+  `install`, `uninstall`, `start`, `stop`, `restart`, `status`, `tui`,
+  `dashboard`, `daemon`, `run-once`, `notify-test`, `doctor`, `logs`.
+- **rich-powered TUI** (`we-forgectl tui`) — cokacctl-style menu with
+  service status, mode, telegram state, and one-key actions.
+
+### Added
+
+#### `scripts/we-forgectl` (single Python file, ~700 lines)
+
+- `ServiceManager` abstraction with three platform implementations:
+  - `LaunchdManager` (macOS) — atomic plist writes, `launchctl bootstrap`,
+    `KeepAlive=true` for daemon mode or `StartCalendarInterval Minute=0`
+    for scheduled mode
+  - `SystemdManager` (Linux) — user-mode service + timer units,
+    `systemctl --user enable --now`, `loginctl enable-linger` reminder
+  - `TaskSchedulerManager` (Windows) — PowerShell `Register-ScheduledTask`
+    with `-AtLogOn` (daemon) or hourly trigger (scheduled)
+- Legacy LaunchAgent migration (auto-removes `com.yukibana.we-forge-tick`
+  and replaces with `com.we-forge.daemon`)
+- Daemon loop with optional Telegram long-poll integration
+- Telegram Bot API client using stdlib `urllib` (no extra deps)
+- Backup-before-destroy on uninstall (safety-guard ECC pattern)
+
+#### `install.sh` enhancements
+
+- New flags: `--no-service`, `--enable-telegram`, `--daemon`
+- Installs we-forgectl to `~/.local/bin/we-forgectl` (warns if not in PATH)
+- Auto-invokes `we-forgectl install` at the end (replaces the old
+  manual scheduler instructions)
+- Existing `--dry-run` and `--test` flags continue to work
+
+#### `install.ps1` enhancements
+
+- Task Scheduler action now invokes
+  `wsl.exe -- bash -lc "we-forgectl run-once"` (unified entry point)
+- Falls back to `~/.claude/learning/tick.sh` if we-forgectl unavailable
+
+### ECC marketplace skill alignment
+
+This release makes we-forge a reference implementation of three ECC skills:
+
+- `autonomous-agent-harness` — "Replaces standalone agent frameworks
+  (Hermes, AutoGPT) by leveraging Claude Code's native crons, dispatch,
+  MCP tools, and memory" — we-forgectl now delivers this end-to-end
+- `enterprise-agent-ops` — lifecycle (start/pause/stop/restart),
+  observability (logs/status), safety controls (kill switches), change
+  management (install/uninstall versioning) — all four operational
+  domains implemented
+- `safety-guard` — backup-before-destroy on uninstall; deep-uninstall
+  moves data to backup instead of deleting
+
+Plus existing alignment from v0.1.0:
+
+- `dashboard-builder` (delegated to dashboard.py)
+- `messages-ops` (Telegram notifier message patterns)
+- `continuous-agent-loop` (daemon polling pattern)
+
+### Migration from v0.1.0
+
+Re-run the installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/EunCHanPark/we-forge/main/install.sh | bash
+```
+
+The new installer detects and migrates the legacy
+`com.yukibana.we-forge-tick` LaunchAgent automatically (backed up to
+`~/.we-forge/backup/`).
+
 ## [0.1.0] — 2026-04-23
 
 Initial public release.
@@ -119,5 +208,6 @@ Initial public release.
 - Secrets are dropped (not masked) by `redact.sh` before any data hits
   `events.jsonl` / `patterns.jsonl`.
 
-[Unreleased]: https://github.com/EunCHanPark/we-forge/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/EunCHanPark/we-forge/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/EunCHanPark/we-forge/releases/tag/v0.2.0
 [0.1.0]: https://github.com/EunCHanPark/we-forge/releases/tag/v0.1.0

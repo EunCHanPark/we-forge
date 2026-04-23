@@ -156,10 +156,17 @@ function Install-TaskScheduler {
     $trigger    = New-ScheduledTaskTrigger -Once -At $startTime `
                     -RepetitionInterval (New-TimeSpan -Hours 1)
 
-    # Action: invoke wsl.exe with the tick script
+    # Action: invoke wsl.exe with we-forgectl (the unified entry point).
+    # we-forgectl run-once is equivalent to tick.sh but routes through the
+    # service manager so logs land in ~/Library/Logs/we-forge/daemon.log
+    # consistently with the other platforms.
+    # Note: we-forgectl install (called inside WSL by install.sh) ALSO creates
+    # a systemd timer, which is harmless overlap — tick.sh has its own mkdir
+    # lock so double-fires are no-ops, and the Windows Task Scheduler is what
+    # actually wakes WSL2 when no terminal is open.
     $action = New-ScheduledTaskAction `
         -Execute "wsl.exe" `
-        -Argument "-- bash -lc `"~/.claude/learning/tick.sh`""
+        -Argument "-- bash -lc `"~/.local/bin/we-forgectl run-once 2>/dev/null || ~/.claude/learning/tick.sh`""
 
     # Settings: allow on-battery, restart on failure, bounded runtime
     $settings = New-ScheduledTaskSettingsSet `

@@ -1,0 +1,923 @@
+#!/usr/bin/env python3
+"""we-forgectl — we-forge service & operations control
+
+Single-file CLI implementing:
+  - install / uninstall / start / stop / restart / status
+  - run (foreground) / daemon (long-running loop)
+  - tui (rich-powered)  / dashboard (web)
+  - notify-test / doctor
+
+Architecture inspired by:
+  - cokacctl (Rust, https://github.com/kstost/cokacctl) — ServiceManager trait,
+    atomic plist writes, KeepAlive=true daemon model
+  - hermes-gateway (Python, NousResearch/hermes-agent/scripts/hermes-gateway) —
+    single-file CLI, OS dispatch, install/uninstall/start/stop/restart/status
+
+Implements ECC marketplace skill patterns:
+  - autonomous-agent-harness: persistent agent loops via Claude Code native
+  - enterprise-agent-ops: lifecycle (start/pause/stop/restart), observability,
+    safety controls, change management
+  - safety-guard: backup-before-destroy on uninstall, dry-run default
+  - dashboard-builder: operator-question dashboard (delegated to dashboard.py)
+
+Modes:
+  - scheduled (default): launchd StartCalendarInterval / systemd OnCalendar /
+    Task Scheduler hourly. Same cost profile as classic cron.
+  - daemon (--enable-telegram or --daemon): launchd KeepAlive=true / systemd
+    Restart=always / Task Scheduler AtLogon. Long-running process; required
+    when Telegram bot polling is enabled.
+
+Data layout:
+  ~/.we-forge/
+    config.json         # mode, telegram opt-in, install metadata
+    backup/             # uninstall backups
+  ~/Library/LaunchAgents/com.we-forge.daemon.plist  (macOS)
+  ~/.config/systemd/user/we-forge.service           (Linux)
+  Windows Task Scheduler task: "we-forge"
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import platform
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+# ----------------------------------------------------------------------------
+# Constants
+# ----------------------------------------------------------------------------
+
+CLAUDE_HOME    = Path(os.environ.get("CLAUDE_HOME", str(Path.home() / ".claude")))
+WE_FORGE_HOME  = Path(os.environ.get("WE_FORGE_HOME", str(Path.home() / ".we-forge")))
+CONFIG_FILE    = WE_FORGE_HOME / "config.json"
+BACKUP_DIR     = WE_FORGE_HOME / "backup"
+DAEMON_PID     = WE_FORGE_HOME / "daemon.pid"
+
+# Service identifiers
+SERVICE_LABEL_MACOS  = "com.we-forge.daemon"
+SERVICE_NAME_LINUX   = "we-forge"
+TASK_NAME_WINDOWS    = "we-forge"
+
+# Legacy LaunchAgent labels we know about — for migration
+LEGACY_LABELS_MACOS = ["com.yukibana.we-forge-tick"]
+
+# Daemon polling interval (seconds)
+DAEMON_INTERVAL = int(os.environ.get("WE_FORGE_DAEMON_INTERVAL", "300"))  # 5 min
+
+# ----------------------------------------------------------------------------
+# Output helpers
+# ----------------------------------------------------------------------------
+
+def _color(s: str) -> str:
+    return s if sys.stdout.isatty() else ""
+
+GREEN  = _color("\033[32m")
+RED    = _color("\033[31m")
+YELLOW = _color("\033[33m")
+CYAN   = _color("\033[36m")
+DIM    = _color("\033[2m")
+BOLD   = _color("\033[1m")
+RESET  = _color("\033[0m")
+
+def step(msg: str) -> None:    print(f"{CYAN}==>{RESET} {msg}")
+def ok(msg: str) -> None:      print(f"  {GREEN}OK  {RESET}{msg}")
+def warn(msg: str) -> None:    print(f"  {YELLOW}WARN{RESET} {msg}")
+def fail(msg: str) -> None:    print(f"  {RED}FAIL{RESET} {msg}", file=sys.stderr)
+def info(msg: str) -> None:    print(f"  {DIM}{msg}{RESET}")
+
+def now_iso() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+# ----------------------------------------------------------------------------
+# Config (JSON file at ~/.we-forge/config.json)
+# ----------------------------------------------------------------------------
+
+def load_config() -> dict:
+    if CONFIG_FILE.exists():
+        try:
+            return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            warn(f"{CONFIG_FILE} is malformed; treating as empty")
+    return {}
+
+def save_config(cfg: dict) -> None:
+    WE_FORGE_HOME.mkdir(parents=True, exist_ok=True)
+    tmp = CONFIG_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(cfg, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.chmod(tmp, 0o600)
+    tmp.replace(CONFIG_FILE)
+
+# ----------------------------------------------------------------------------
+# Platform detection
+# ----------------------------------------------------------------------------
+
+def detect_os() -> str:
+    s = platform.system().lower()
+    if s == "darwin":
+        return "macos"
+    if s == "linux":
+        return "linux"
+    if s == "windows":
+        return "windows"
+    return s
+
+def is_wsl() -> bool:
+    if detect_os() != "linux":
+        return False
+    try:
+        return "microsoft" in Path("/proc/version").read_text().lower()
+    except OSError:
+        return False
+
+# ----------------------------------------------------------------------------
+# Service manager — abstract base + 3 platform impls
+# (cokacctl ServiceManager trait pattern, ported to Python)
+# ----------------------------------------------------------------------------
+
+class ServiceManager:
+    """Abstract OS service manager. Subclasses implement the platform calls."""
+
+    def install(self, daemon: bool) -> None: raise NotImplementedError
+    def uninstall(self) -> None:               raise NotImplementedError
+    def start(self) -> None:                   raise NotImplementedError
+    def stop(self) -> None:                    raise NotImplementedError
+    def restart(self) -> None:
+        self.stop()
+        time.sleep(0.5)
+        self.start()
+    def status(self) -> str:                   raise NotImplementedError  # 'running'|'stopped'|'not-installed'
+    def migrate_legacy(self) -> None: pass
+
+# ---- macOS launchd ----------------------------------------------------------
+
+class LaunchdManager(ServiceManager):
+    def __init__(self) -> None:
+        self.label    = SERVICE_LABEL_MACOS
+        self.plist    = Path.home() / "Library/LaunchAgents" / f"{self.label}.plist"
+        self.log_dir  = Path.home() / "Library/Logs/we-forge"
+        self.uid      = os.getuid()
+        self.domain   = f"gui/{self.uid}"
+
+    def _generate_plist(self, daemon: bool) -> str:
+        wforgectl_path = shutil.which("we-forgectl") or str(Path(__file__).resolve())
+        log_path = str(self.log_dir / "daemon.log")
+        if daemon:
+            program_args = f"""
+        <string>{wforgectl_path}</string>
+        <string>daemon</string>"""
+            keepalive_block = "    <key>RunAtLoad</key><true/>\n    <key>KeepAlive</key><true/>\n"
+        else:
+            program_args = f"""
+        <string>{wforgectl_path}</string>
+        <string>run-once</string>"""
+            keepalive_block = (
+                "    <key>StartCalendarInterval</key>\n"
+                "    <dict><key>Minute</key><integer>0</integer></dict>\n"
+                "    <key>RunAtLoad</key><false/>\n"
+            )
+        return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{self.label}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/env</string>
+        <string>python3</string>{program_args}
+    </array>
+{keepalive_block}    <key>StandardOutPath</key>
+    <string>{log_path}</string>
+    <key>StandardErrorPath</key>
+    <string>{log_path}</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>CLAUDE_HOME</key>
+        <string>{CLAUDE_HOME}</string>
+        <key>WE_FORGE_HOME</key>
+        <string>{WE_FORGE_HOME}</string>
+    </dict>
+</dict>
+</plist>
+"""
+
+    def install(self, daemon: bool) -> None:
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.plist.parent.mkdir(parents=True, exist_ok=True)
+        content = self._generate_plist(daemon)
+        tmp = self.plist.with_suffix(".plist.tmp")
+        tmp.write_text(content, encoding="utf-8")
+        os.chmod(tmp, 0o600)
+        tmp.replace(self.plist)
+        ok(f"plist written: {self.plist}")
+        target = f"{self.domain}/{self.label}"
+        subprocess.run(["launchctl", "enable", target], capture_output=True)
+        r = subprocess.run(["launchctl", "bootstrap", self.domain, str(self.plist)],
+                           capture_output=True, text=True)
+        if r.returncode != 0 and "already loaded" not in (r.stderr + r.stdout).lower():
+            subprocess.run(["launchctl", "kickstart", "-k", target], capture_output=True)
+        ok("launchctl bootstrap completed")
+
+    def uninstall(self) -> None:
+        target = f"{self.domain}/{self.label}"
+        if self.plist.exists():
+            subprocess.run(["launchctl", "bootout", target], capture_output=True)
+            self.plist.unlink()
+            ok(f"plist removed: {self.plist}")
+        else:
+            info(f"plist not present: {self.plist}")
+
+    def start(self) -> None:
+        target = f"{self.domain}/{self.label}"
+        subprocess.run(["launchctl", "kickstart", target], check=True)
+        ok(f"started {target}")
+
+    def stop(self) -> None:
+        subprocess.run(["launchctl", "stop", self.label], capture_output=True)
+        ok(f"stopped {self.label}")
+
+    def status(self) -> str:
+        if not self.plist.exists():
+            return "not-installed"
+        target = f"{self.domain}/{self.label}"
+        r = subprocess.run(["launchctl", "print", target], capture_output=True, text=True)
+        if r.returncode != 0:
+            return "stopped"
+        text = r.stdout
+        has_pid = any(line.strip().startswith("pid =") and "0" not in line for line in text.splitlines())
+        running = "state = running" in text
+        return "running" if (has_pid or running) else "stopped"
+
+    def migrate_legacy(self) -> None:
+        for legacy in LEGACY_LABELS_MACOS:
+            legacy_plist = Path.home() / f"Library/LaunchAgents/{legacy}.plist"
+            if legacy_plist.exists():
+                step(f"migrating legacy LaunchAgent: {legacy}")
+                subprocess.run(["launchctl", "bootout", f"{self.domain}/{legacy}"], capture_output=True)
+                BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+                backup_dest = BACKUP_DIR / f"{legacy}.{now_iso()}.plist"
+                shutil.copy2(legacy_plist, backup_dest)
+                legacy_plist.unlink()
+                ok(f"legacy removed (backup: {backup_dest})")
+
+# ---- Linux systemd ----------------------------------------------------------
+
+class SystemdManager(ServiceManager):
+    def __init__(self) -> None:
+        self.name        = SERVICE_NAME_LINUX
+        unit_dir         = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "systemd/user"
+        self.service_unit = unit_dir / f"{self.name}.service"
+        self.timer_unit   = unit_dir / f"{self.name}.timer"
+        self.log_dir      = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "we-forge"
+
+    def _generate_service(self, daemon: bool) -> str:
+        wforgectl_path = shutil.which("we-forgectl") or str(Path(__file__).resolve())
+        cmd = "daemon" if daemon else "run-once"
+        restart_block = "Restart=always\nRestartSec=30" if daemon else "Restart=on-failure\nRestartSec=30"
+        return f"""[Unit]
+Description=we-forge pattern-learning service ({"daemon" if daemon else "scheduled"})
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env python3 {wforgectl_path} {cmd}
+{restart_block}
+StandardOutput=append:{self.log_dir}/daemon.log
+StandardError=append:{self.log_dir}/daemon.log
+Environment=CLAUDE_HOME={CLAUDE_HOME}
+Environment=WE_FORGE_HOME={WE_FORGE_HOME}
+
+[Install]
+WantedBy=default.target
+"""
+
+    def _generate_timer(self) -> str:
+        return f"""[Unit]
+Description=we-forge hourly tick timer
+Requires={self.name}.service
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+Persistent=true
+Unit={self.name}.service
+
+[Install]
+WantedBy=timers.target
+"""
+
+    def install(self, daemon: bool) -> None:
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.service_unit.parent.mkdir(parents=True, exist_ok=True)
+        self.service_unit.write_text(self._generate_service(daemon), encoding="utf-8")
+        os.chmod(self.service_unit, 0o600)
+        ok(f"service unit written: {self.service_unit}")
+        if not daemon:
+            self.timer_unit.write_text(self._generate_timer(), encoding="utf-8")
+            os.chmod(self.timer_unit, 0o600)
+            ok(f"timer unit written: {self.timer_unit}")
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+        target = f"{self.name}.timer" if not daemon else f"{self.name}.service"
+        subprocess.run(["systemctl", "--user", "enable", "--now", target], check=True)
+        ok(f"systemctl --user enable --now {target}")
+        user = os.environ.get("USER") or os.environ.get("USERNAME")
+        if user:
+            r = subprocess.run(["loginctl", "show-user", user, "-p", "Linger"],
+                               capture_output=True, text=True)
+            if r.returncode == 0 and "Linger=yes" not in r.stdout:
+                info(f"to keep service running after logout, run: sudo loginctl enable-linger {user}")
+
+    def uninstall(self) -> None:
+        for unit_name in (f"{self.name}.timer", f"{self.name}.service"):
+            subprocess.run(["systemctl", "--user", "disable", "--now", unit_name],
+                           capture_output=True)
+        for u in (self.timer_unit, self.service_unit):
+            if u.exists():
+                u.unlink()
+                ok(f"removed: {u}")
+        subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
+
+    def start(self) -> None:
+        target = f"{self.name}.timer" if self.timer_unit.exists() else f"{self.name}.service"
+        subprocess.run(["systemctl", "--user", "start", target], check=True)
+        ok(f"started {target}")
+
+    def stop(self) -> None:
+        for unit_name in (f"{self.name}.timer", f"{self.name}.service"):
+            subprocess.run(["systemctl", "--user", "stop", unit_name], capture_output=True)
+        ok("stopped")
+
+    def status(self) -> str:
+        target = f"{self.name}.timer" if self.timer_unit.exists() else f"{self.name}.service"
+        if not (self.service_unit.exists() or self.timer_unit.exists()):
+            return "not-installed"
+        r = subprocess.run(["systemctl", "--user", "is-active", target],
+                           capture_output=True, text=True)
+        s = r.stdout.strip()
+        return "running" if s == "active" else "stopped"
+
+# ---- Windows Task Scheduler -------------------------------------------------
+
+class TaskSchedulerManager(ServiceManager):
+    def __init__(self) -> None:
+        self.task_name = TASK_NAME_WINDOWS
+
+    def _powershell(self, script: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True, text=True
+        )
+
+    def install(self, daemon: bool) -> None:
+        wforgectl_path = shutil.which("we-forgectl") or str(Path(__file__).resolve())
+        cmd = "daemon" if daemon else "run-once"
+        if daemon:
+            trigger = "$trigger = New-ScheduledTaskTrigger -AtLogOn"
+        else:
+            trigger = (
+                "$trigger = New-ScheduledTaskTrigger -Once "
+                "-At ([DateTime]::Now.AddHours(1).Date.AddHours([DateTime]::Now.Hour + 1)) "
+                "-RepetitionInterval (New-TimeSpan -Hours 1)"
+            )
+        script = f"""
+$action = New-ScheduledTaskAction -Execute 'python3' -Argument '{wforgectl_path} {cmd}'
+{trigger}
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
+$principal = New-ScheduledTaskPrincipal -UserId "$env:USERNAME" -LogonType Interactive
+$task = New-ScheduledTask -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "we-forge pattern-learning service"
+Unregister-ScheduledTask -TaskName "{self.task_name}" -Confirm:$false -ErrorAction SilentlyContinue
+Register-ScheduledTask -TaskName "{self.task_name}" -InputObject $task | Out-Null
+Write-Output "registered"
+"""
+        r = self._powershell(script)
+        if r.returncode == 0:
+            ok(f"Task Scheduler: {self.task_name} registered")
+        else:
+            fail(f"Register-ScheduledTask failed: {r.stderr.strip()}")
+
+    def uninstall(self) -> None:
+        r = self._powershell(f'Unregister-ScheduledTask -TaskName "{self.task_name}" -Confirm:$false')
+        if r.returncode == 0:
+            ok(f"Task Scheduler: {self.task_name} unregistered")
+        else:
+            info(f"task already absent: {self.task_name}")
+
+    def start(self) -> None:
+        self._powershell(f'Start-ScheduledTask -TaskName "{self.task_name}"')
+        ok(f"started {self.task_name}")
+
+    def stop(self) -> None:
+        self._powershell(f'Stop-ScheduledTask -TaskName "{self.task_name}"')
+        ok(f"stopped {self.task_name}")
+
+    def status(self) -> str:
+        r = self._powershell(f'(Get-ScheduledTask -TaskName "{self.task_name}" -ErrorAction SilentlyContinue).State')
+        s = r.stdout.strip()
+        if not s:
+            return "not-installed"
+        return "running" if s.lower() == "running" else "stopped"
+
+def manager() -> ServiceManager:
+    o = detect_os()
+    if o == "macos":   return LaunchdManager()
+    if o == "linux":   return SystemdManager()
+    if o == "windows": return TaskSchedulerManager()
+    raise SystemExit(f"unsupported OS: {o}")
+
+# ----------------------------------------------------------------------------
+# Tick (one-shot) — calls existing learning/tick.sh
+# ----------------------------------------------------------------------------
+
+def run_tick_once() -> int:
+    tick_script = CLAUDE_HOME / "learning" / "tick.sh"
+    if not tick_script.exists():
+        fail(f"tick.sh not found: {tick_script}")
+        return 1
+    r = subprocess.run(["bash", str(tick_script)])
+    return r.returncode
+
+# ----------------------------------------------------------------------------
+# Telegram notifier (opt-in)
+# ----------------------------------------------------------------------------
+
+class TelegramNotifier:
+    """Minimal Telegram Bot API client using stdlib urllib.
+
+    Activates only when both token and chat_id are configured.
+    Sends notification messages on key events; optionally polls for incoming
+    /commands in daemon mode.
+    """
+
+    def __init__(self, token: str, chat_id: str) -> None:
+        self.token   = token
+        self.chat_id = chat_id
+        self.api     = f"https://api.telegram.org/bot{token}"
+        self._last_update_id = 0
+
+    def send(self, text: str) -> bool:
+        import urllib.parse, urllib.request
+        data = urllib.parse.urlencode({
+            "chat_id":    self.chat_id,
+            "text":       text[:4000],
+            "parse_mode": "Markdown",
+        }).encode()
+        try:
+            req = urllib.request.Request(f"{self.api}/sendMessage", data=data)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return resp.status == 200
+        except Exception as e:
+            warn(f"telegram send failed: {e}")
+            return False
+
+    def poll(self, timeout: int = 25) -> list[dict]:
+        """Long-poll for /command updates. Returns list of update dicts."""
+        import urllib.parse, urllib.request
+        params = {
+            "offset":          self._last_update_id + 1,
+            "timeout":         timeout,
+            "allowed_updates": '["message"]',
+        }
+        url = f"{self.api}/getUpdates?{urllib.parse.urlencode(params)}"
+        try:
+            with urllib.request.urlopen(url, timeout=timeout + 5) as resp:
+                data = json.loads(resp.read().decode())
+            updates = data.get("result", [])
+            for u in updates:
+                if u.get("update_id", 0) > self._last_update_id:
+                    self._last_update_id = u["update_id"]
+            return updates
+        except Exception as e:
+            warn(f"telegram poll failed: {e}")
+            return []
+
+    def handle_command(self, cmd: str) -> str:
+        """Dispatch /commands. Returns response text."""
+        cmd = cmd.strip().lower().split("@")[0]
+        if cmd in ("/skill_report", "/report"):
+            return self._cmd_report()
+        if cmd in ("/dashboard", "/dash"):
+            return self._cmd_dashboard()
+        if cmd in ("/last_tick", "/last"):
+            return self._cmd_last_tick()
+        if cmd in ("/status", "/health"):
+            return self._cmd_status()
+        if cmd in ("/help", "/start"):
+            return ("we-forge bot commands:\n"
+                    "/skill_report — top patterns + ECC matches\n"
+                    "/last_tick — last tick log tail\n"
+                    "/status — service status\n"
+                    "/dashboard — dashboard URL")
+        return f"unknown command: {cmd}\nsend /help for the full list"
+
+    def _cmd_report(self) -> str:
+        try:
+            from importlib.util import spec_from_file_location, module_from_spec
+            spec = spec_from_file_location("dashboard",
+                str(Path(__file__).parent.parent / "dashboard" / "dashboard.py"))
+            mod = module_from_spec(spec); spec.loader.exec_module(mod)
+            k = mod.compute_kpis()
+            lines = ["*we-forge skill report*", ""]
+            lines.append(f"events: `{k['totals']['events']}` patterns: `{k['totals']['patterns']}`")
+            lines.append(f"queue: `{k['totals']['queue']}` ledger: `{k['totals']['ledger']}`")
+            lines.append(f"ECC_MATCH ratio: `{k['ecc_match_ratio']*100:.1f}%`")
+            lines.append("")
+            lines.append("*top 5 patterns:*")
+            for pat, n in k["top_patterns"][:5]:
+                lines.append(f"  `{n}` {pat}")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"report failed: {e}"
+
+    def _cmd_dashboard(self) -> str:
+        return ("dashboard: `we-forgectl dashboard` (web on `http://127.0.0.1:8765`)\n"
+                "or `we-forgectl tui` (terminal)")
+
+    def _cmd_last_tick(self) -> str:
+        log = CLAUDE_HOME / "learning/data/tick.log"
+        if not log.exists():
+            return "no tick.log yet"
+        lines = log.read_text(errors="replace").splitlines()[-15:]
+        return "*last tick log:*\n```\n" + "\n".join(lines) + "\n```"
+
+    def _cmd_status(self) -> str:
+        m = manager()
+        s = m.status()
+        cfg = load_config()
+        return (f"*we-forge status*: `{s}`\n"
+                f"mode: `{cfg.get('mode', 'scheduled')}`\n"
+                f"telegram: `{'enabled' if cfg.get('telegram_enabled') else 'disabled'}`")
+
+def get_notifier():
+    cfg = load_config()
+    if not cfg.get("telegram_enabled"):
+        return None
+    token   = cfg.get("telegram_token") or os.environ.get("WE_FORGE_TELEGRAM_TOKEN", "")
+    chat_id = cfg.get("telegram_chat_id") or os.environ.get("WE_FORGE_TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        return None
+    return TelegramNotifier(token, chat_id)
+
+# ----------------------------------------------------------------------------
+# Daemon loop
+# ----------------------------------------------------------------------------
+
+def daemon_loop() -> int:
+    """Long-running loop: tick every WE_FORGE_DAEMON_INTERVAL seconds, plus
+    optional Telegram bot polling (if enabled)."""
+    WE_FORGE_HOME.mkdir(parents=True, exist_ok=True)
+    DAEMON_PID.write_text(str(os.getpid()), encoding="utf-8")
+    print(f"[{now_iso()}] we-forge daemon starting (pid={os.getpid()}, interval={DAEMON_INTERVAL}s)")
+    notifier = get_notifier()
+    if notifier:
+        print(f"[{now_iso()}] Telegram notifier enabled")
+        notifier.send("🔧 we-forge daemon started")
+    last_tick = 0.0
+    try:
+        while True:
+            now = time.time()
+            if now - last_tick >= DAEMON_INTERVAL:
+                print(f"[{now_iso()}] tick begin")
+                rc = run_tick_once()
+                print(f"[{now_iso()}] tick end (rc={rc})")
+                last_tick = now
+            if notifier:
+                updates = notifier.poll(timeout=25)
+                for u in updates:
+                    msg = u.get("message", {})
+                    text = (msg.get("text") or "").strip()
+                    chat_id = str(msg.get("chat", {}).get("id", ""))
+                    if chat_id != notifier.chat_id:
+                        continue
+                    if text.startswith("/"):
+                        reply = notifier.handle_command(text)
+                        notifier.send(reply)
+            else:
+                sleep_for = max(1, int(DAEMON_INTERVAL - (time.time() - last_tick)))
+                time.sleep(min(60, sleep_for))
+    except KeyboardInterrupt:
+        print(f"[{now_iso()}] daemon stopped (KeyboardInterrupt)")
+        if notifier:
+            notifier.send("🔧 we-forge daemon stopped")
+        return 0
+    except Exception as e:
+        print(f"[{now_iso()}] daemon crashed: {e}", file=sys.stderr)
+        if notifier:
+            notifier.send(f"⚠️ we-forge daemon crashed: {e}")
+        return 1
+    finally:
+        if DAEMON_PID.exists():
+            DAEMON_PID.unlink()
+
+# ----------------------------------------------------------------------------
+# TUI (rich)
+# ----------------------------------------------------------------------------
+
+def tui() -> int:
+    try:
+        from rich.console   import Console
+        from rich.panel     import Panel
+        from rich.table     import Table
+        from rich.prompt    import Prompt
+    except ImportError:
+        warn("rich not installed; falling back to plain status")
+        print()
+        return cmd_status()
+
+    console = Console()
+    while True:
+        os.system("clear" if os.name != "nt" else "cls")
+        m   = manager()
+        s   = m.status()
+        cfg = load_config()
+        status_color = {"running":"green","stopped":"yellow","not-installed":"red"}.get(s, "white")
+        t = Table(show_header=False, box=None, padding=(0, 1))
+        t.add_column(style="dim"); t.add_column(style="bold")
+        t.add_row("status",     f"[{status_color}]{s}[/{status_color}]")
+        t.add_row("mode",       cfg.get("mode", "scheduled"))
+        t.add_row("telegram",   "enabled" if cfg.get("telegram_enabled") else "disabled")
+        t.add_row("CLAUDE_HOME", str(CLAUDE_HOME))
+        console.print(Panel(t, title="we-forge control", border_style="cyan"))
+        console.print()
+        console.print("  [s] Start service       [t] Stop service       [r] Restart")
+        console.print("  [i] Install             [u] Uninstall          [v] Verify")
+        console.print("  [l] Show recent ticks   [m] Open dashboard     [n] Toggle Telegram")
+        console.print("  [d] Run tick now        [q] Quit")
+        console.print()
+        choice = Prompt.ask("choice", default="q").strip().lower()
+        try:
+            if choice == "s":   m.start()
+            elif choice == "t": m.stop()
+            elif choice == "r": m.restart()
+            elif choice == "i":
+                cmd_install(False, False)
+            elif choice == "u":
+                if Prompt.ask("are you sure? (yes/no)", default="no") == "yes":
+                    cmd_uninstall(deep=False)
+            elif choice == "v": cmd_doctor()
+            elif choice == "l": cmd_logs(20)
+            elif choice == "m":
+                step("opening dashboard at http://127.0.0.1:8765")
+                cmd_dashboard()
+            elif choice == "n": cmd_toggle_telegram()
+            elif choice == "d":
+                step("running tick now...")
+                rc = run_tick_once()
+                ok(f"tick exit code: {rc}")
+            elif choice == "q":
+                return 0
+            else:
+                warn(f"unknown choice: {choice}")
+        except Exception as e:
+            fail(str(e))
+        Prompt.ask("press enter to continue", default="")
+
+# ----------------------------------------------------------------------------
+# Subcommand implementations
+# ----------------------------------------------------------------------------
+
+def cmd_install(enable_telegram: bool, daemon: bool) -> int:
+    """One-shot install: register service, optionally enable Telegram."""
+    step(f"we-forgectl install (daemon={daemon}, telegram={enable_telegram})")
+
+    if enable_telegram:
+        daemon = True
+
+    m = manager()
+    m.migrate_legacy()
+
+    cfg = load_config()
+    cfg.update({
+        "mode":          "daemon" if daemon else "scheduled",
+        "installed_at":  now_iso(),
+        "telegram_enabled": enable_telegram,
+    })
+    if enable_telegram:
+        token   = (os.environ.get("WE_FORGE_TELEGRAM_TOKEN")
+                   or input("WE_FORGE_TELEGRAM_TOKEN (from @BotFather): ").strip())
+        chat_id = (os.environ.get("WE_FORGE_TELEGRAM_CHAT_ID")
+                   or input("WE_FORGE_TELEGRAM_CHAT_ID (your chat id with the bot): ").strip())
+        if not token or not chat_id:
+            fail("token and chat_id are required when --enable-telegram")
+            return 2
+        cfg["telegram_token"]   = token
+        cfg["telegram_chat_id"] = chat_id
+    save_config(cfg)
+    ok(f"config: {CONFIG_FILE}")
+
+    m.install(daemon=daemon)
+    ok(f"service installed (mode={cfg['mode']})")
+
+    time.sleep(1.5)
+    s = m.status()
+    if s == "running":
+        ok(f"status: {s}")
+    else:
+        warn(f"status: {s} — check logs")
+
+    print()
+    step("we-forge is now installed and " + ("running as daemon" if daemon else "scheduled hourly"))
+    print(f"  status:    we-forgectl status")
+    print(f"  logs:      we-forgectl logs")
+    print(f"  uninstall: we-forgectl uninstall")
+    return 0
+
+def cmd_uninstall(deep: bool) -> int:
+    """Safe uninstall: backup → remove service → optionally remove data."""
+    step("we-forgectl uninstall (safety-guard pattern)")
+
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    snap = BACKUP_DIR / now_iso()
+    snap.mkdir()
+    if CONFIG_FILE.exists():
+        shutil.copy2(CONFIG_FILE, snap / "config.json")
+    if (CLAUDE_HOME / "settings.json").exists():
+        shutil.copy2(CLAUDE_HOME / "settings.json", snap / "settings.json")
+    ok(f"backup: {snap}")
+
+    m = manager()
+    try:
+        m.stop()
+    except Exception as e:
+        warn(f"stop: {e}")
+    m.uninstall()
+    ok("service uninstalled")
+
+    if deep:
+        warn("deep uninstall: moving ~/.we-forge/ and ~/.claude/learning/data/ to backup")
+        if WE_FORGE_HOME.exists():
+            shutil.move(str(WE_FORGE_HOME), str(snap / "we-forge-home"))
+            ok(f"~/.we-forge moved to {snap}/we-forge-home")
+        data_dir = CLAUDE_HOME / "learning/data"
+        if data_dir.exists():
+            shutil.move(str(data_dir), str(snap / "learning-data"))
+            ok(f"~/.claude/learning/data moved to {snap}/learning-data")
+
+    print()
+    step(f"uninstalled. backup at: {snap}")
+    print("  to fully remove agent files, also: rm ~/.claude/agents/we-forge.md ~/.claude/agents/{pattern-detector,quality-auditor,skill-synthesizer,monitor-sentinel}.md ~/.claude/commands/{watch-and-learn,skill-report,dashboard}.md")
+    return 0
+
+def cmd_status() -> int:
+    m   = manager()
+    s   = m.status()
+    cfg = load_config()
+    color = {"running":GREEN, "stopped":YELLOW, "not-installed":RED}.get(s, "")
+    print(f"  status:   {color}{s}{RESET}")
+    print(f"  mode:     {cfg.get('mode', 'scheduled')}")
+    print(f"  telegram: {'enabled' if cfg.get('telegram_enabled') else 'disabled'}")
+    print(f"  os:       {detect_os()}{' (WSL)' if is_wsl() else ''}")
+    print(f"  config:   {CONFIG_FILE}")
+    return 0 if s == "running" else 1
+
+def cmd_logs(n: int) -> int:
+    log_candidates = [
+        Path.home() / "Library/Logs/we-forge/daemon.log",
+        Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "we-forge/daemon.log",
+        CLAUDE_HOME / "learning/data/tick.log",
+    ]
+    for log in log_candidates:
+        if log.exists():
+            step(f"tail -n {n} {log}")
+            try:
+                lines = log.read_text(errors="replace").splitlines()[-n:]
+                for line in lines:
+                    print(f"  {line}")
+            except OSError as e:
+                fail(str(e))
+            return 0
+    warn("no log files found yet")
+    return 1
+
+def cmd_dashboard() -> int:
+    candidates = [
+        Path(__file__).resolve().parent.parent / "dashboard/dashboard.py",
+        Path.home() / "we-forge/dashboard/dashboard.py",
+    ]
+    for d in candidates:
+        if d.exists():
+            os.execv(sys.executable, [sys.executable, str(d), "--serve"])
+    fail("dashboard.py not found")
+    return 1
+
+def cmd_toggle_telegram() -> int:
+    cfg = load_config()
+    enabled = not cfg.get("telegram_enabled", False)
+    if enabled:
+        token   = (cfg.get("telegram_token") or os.environ.get("WE_FORGE_TELEGRAM_TOKEN")
+                   or input("WE_FORGE_TELEGRAM_TOKEN: ").strip())
+        chat_id = (cfg.get("telegram_chat_id") or os.environ.get("WE_FORGE_TELEGRAM_CHAT_ID")
+                   or input("WE_FORGE_TELEGRAM_CHAT_ID: ").strip())
+        if not token or not chat_id:
+            fail("token and chat_id required")
+            return 2
+        cfg.update({"telegram_token": token, "telegram_chat_id": chat_id})
+    cfg["telegram_enabled"] = enabled
+    save_config(cfg)
+    ok(f"telegram: {'enabled' if enabled else 'disabled'}")
+    info("re-run 'we-forgectl restart' for daemon to pick up the change")
+    return 0
+
+def cmd_notify_test() -> int:
+    n = get_notifier()
+    if not n:
+        fail("telegram not enabled or token/chat_id missing")
+        return 2
+    if n.send("🔧 we-forge notify-test ping at " + now_iso()):
+        ok("test message sent")
+        return 0
+    return 1
+
+def cmd_doctor() -> int:
+    """Diagnose install + dependencies."""
+    step("doctor")
+    issues = 0
+    for tool in ("python3", "bash", "jq"):
+        if shutil.which(tool):
+            ok(f"{tool}: {shutil.which(tool)}")
+        else:
+            fail(f"{tool} not in PATH"); issues += 1
+    for path, label in [
+        (CLAUDE_HOME / "learning/tick.sh", "tick.sh"),
+        (CLAUDE_HOME / "agents/we-forge.md", "we-forge agent"),
+        (CLAUDE_HOME / "settings.json", "settings.json"),
+    ]:
+        if path.exists():
+            ok(f"{label}: {path}")
+        else:
+            fail(f"{label} missing: {path}"); issues += 1
+    s = manager().status()
+    (ok if s == "running" else warn)(f"service: {s}")
+    if issues == 0:
+        print(f"\n{GREEN}all checks passed.{RESET}")
+        return 0
+    print(f"\n{RED}{issues} issue(s).{RESET} run `we-forgectl install` to register service.")
+    return 1
+
+# ----------------------------------------------------------------------------
+# CLI
+# ----------------------------------------------------------------------------
+
+def main() -> int:
+    p = argparse.ArgumentParser(
+        prog="we-forgectl",
+        description="we-forge service & operations control")
+    sp = p.add_subparsers(dest="cmd")
+
+    p_install = sp.add_parser("install",   help="register the launchd/systemd/Task Scheduler service")
+    p_install.add_argument("--enable-telegram", action="store_true",
+                           help="opt-in Telegram notifier (forces daemon mode)")
+    p_install.add_argument("--daemon", action="store_true",
+                           help="install in daemon mode (long-running, restarts on crash)")
+
+    p_uninstall = sp.add_parser("uninstall", help="remove the service (with safety backup)")
+    p_uninstall.add_argument("--deep", action="store_true",
+                             help="also move ~/.we-forge and learning/data to backup")
+
+    sp.add_parser("start",     help="start the service")
+    sp.add_parser("stop",      help="stop the service")
+    sp.add_parser("restart",   help="restart the service")
+    sp.add_parser("status",    help="show service status")
+    sp.add_parser("run",       help="alias of 'daemon' (foreground long-running)")
+    sp.add_parser("daemon",    help="long-running loop (called by service manager)")
+    sp.add_parser("run-once",  help="run a single tick and exit (called by scheduled mode)")
+    sp.add_parser("tui",       help="rich-powered terminal UI")
+    sp.add_parser("dashboard", help="launch the web dashboard (delegates to dashboard.py --serve)")
+    sp.add_parser("notify-test", help="send a Telegram test message")
+    sp.add_parser("doctor",    help="diagnose dependencies and service state")
+    p_logs = sp.add_parser("logs", help="tail recent service logs")
+    p_logs.add_argument("-n", type=int, default=30)
+
+    args = p.parse_args()
+    if not args.cmd:
+        p.print_help()
+        return 0
+
+    try:
+        if args.cmd == "install":      return cmd_install(args.enable_telegram, args.daemon)
+        if args.cmd == "uninstall":    return cmd_uninstall(deep=args.deep)
+        if args.cmd == "start":        manager().start();   return 0
+        if args.cmd == "stop":         manager().stop();    return 0
+        if args.cmd == "restart":      manager().restart(); return 0
+        if args.cmd == "status":       return cmd_status()
+        if args.cmd in ("run", "daemon"): return daemon_loop()
+        if args.cmd == "run-once":     return run_tick_once()
+        if args.cmd == "tui":          return tui()
+        if args.cmd == "dashboard":    return cmd_dashboard()
+        if args.cmd == "notify-test":  return cmd_notify_test()
+        if args.cmd == "doctor":       return cmd_doctor()
+        if args.cmd == "logs":         return cmd_logs(args.n)
+    except KeyboardInterrupt:
+        print()
+        return 130
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())

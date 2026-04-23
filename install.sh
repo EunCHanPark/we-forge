@@ -60,10 +60,16 @@ CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 DRY_RUN=0
 TEST_MODE=0
 
+NO_SERVICE=0
+ENABLE_TELEGRAM=0
+DAEMON_MODE=0
 for arg in "$@"; do
   case "$arg" in
-    --dry-run) DRY_RUN=1 ;;
-    --test)    TEST_MODE=1 ;;
+    --dry-run)         DRY_RUN=1 ;;
+    --test)            TEST_MODE=1 ;;
+    --no-service)      NO_SERVICE=1 ;;
+    --enable-telegram) ENABLE_TELEGRAM=1 ;;
+    --daemon)          DAEMON_MODE=1 ;;
     --branch=*) ;;  # already consumed by curl-pipe self-bootstrap above
     -h|--help)
       sed -n '1,/^$/p' "$0" | sed -n 's/^# \{0,1\}//p'
@@ -264,62 +270,64 @@ Next steps:
 
 EON
 
-if _is_macos; then
-  PLIST_TMPL="$REPO_DIR/launchd/com.we-forge-tick.plist.template"
-  PLIST_DEST="$HOME/Library/LaunchAgents/com.$USER.we-forge-tick.plist"
+# --- step 4: install we-forgectl + register service automatically ---
+
+WFCTL_SRC="$REPO_DIR/scripts/we-forgectl"
+WFCTL_DEST="$HOME/.local/bin/we-forgectl"
+
+if [ -f "$WFCTL_SRC" ]; then
+  _say "installing we-forgectl to $WFCTL_DEST"
+  _run "mkdir -p \"$HOME/.local/bin\""
+  _run "cp -f \"$WFCTL_SRC\" \"$WFCTL_DEST\""
+  _run "chmod +x \"$WFCTL_DEST\""
+
+  # Add ~/.local/bin to PATH for this session if missing
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *)
+      _warn "$HOME/.local/bin is not on your PATH. Add to ~/.zshrc or ~/.bashrc:"
+      _warn "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+      ;;
+  esac
+else
+  _warn "scripts/we-forgectl not found in repo; skipping service registration"
+  NO_SERVICE=1
+fi
+
+if [ "$NO_SERVICE" = "1" ]; then
   cat <<EON
-  4. macOS scheduler — register the LaunchAgent (hourly tick):
 
-       mkdir -p ~/Library/LaunchAgents
-       sed -e "s|__USER__|$USER|g" \\
-           -e "s|__HOME__|$HOME|g" \\
-           -e "s|__CLAUDE_HOME__|$CLAUDE_HOME|g" \\
-           "$PLIST_TMPL" > "$PLIST_DEST"
-       launchctl load -w "$PLIST_DEST"
-       launchctl start com.$USER.we-forge-tick     # manual first tick
-       tail -n 5 $CLAUDE_HOME/learning/data/tick.log
-
-     Unload later with:
-       launchctl unload "$PLIST_DEST"
-
-EON
-elif _is_wsl; then
-  cat <<EON
-  4. WSL2 scheduler — enable cron inside the Linux distro:
-
-     a) Ensure cron is installed and running:
-          sudo apt-get update && sudo apt-get install -y cron
-          sudo service cron start
-          sudo systemctl enable cron 2>/dev/null || true
-
-     b) Persist cron across WSL restarts (recommended). Either:
-          - Enable systemd in WSL:
-              echo -e "[boot]\\nsystemd=true" | sudo tee -a /etc/wsl.conf
-              # then in PowerShell on the Windows side: wsl --shutdown
-          - Or add to ~/.bashrc: 'sudo service cron start'
-
-     c) Install the hourly entry:
-          crontab -e
-          # paste the line from: $REPO_DIR/crontab.example
-
-     d) Verify after :00:
-          tail -n 20 $CLAUDE_HOME/learning/data/tick.log
-
-     See $REPO_DIR/WSL-SETUP.md for the full Windows Server walkthrough.
+  4. (skipped — --no-service) register the service manually:
+       we-forgectl install
+       we-forgectl status
 
 EON
 else
+  WFCTL_INSTALL_FLAGS=""
+  [ "$ENABLE_TELEGRAM" = "1" ] && WFCTL_INSTALL_FLAGS="$WFCTL_INSTALL_FLAGS --enable-telegram"
+  [ "$DAEMON_MODE" = "1" ]     && WFCTL_INSTALL_FLAGS="$WFCTL_INSTALL_FLAGS --daemon"
+
+  if [ "$DRY_RUN" = "1" ]; then
+    _say "DRY: would run: we-forgectl install$WFCTL_INSTALL_FLAGS"
+  else
+    _say "registering service via we-forgectl"
+    "$WFCTL_DEST" install $WFCTL_INSTALL_FLAGS || _warn "we-forgectl install reported issues; run 'we-forgectl doctor' to diagnose"
+  fi
+
   cat <<EON
-  4. Linux scheduler — cron or systemd timer:
 
-     Quickest (cron):
-       crontab -e
-       # paste the line from: $REPO_DIR/crontab.example
+  4. Service registered automatically. Useful commands:
+       we-forgectl status        # service state
+       we-forgectl tui           # rich-powered control TUI
+       we-forgectl dashboard     # open web dashboard
+       we-forgectl logs          # tail recent ticks
+       we-forgectl uninstall     # one-line removal (with safety backup)
 
-     Modern (systemd user timer) — create
-       ~/.config/systemd/user/we-forge-tick.{service,timer}
-     and 'systemctl --user enable --now we-forge-tick.timer'. Template
-     not bundled; hand-roll if you prefer this path.
+  5. Optional — Telegram notifier:
+       export WE_FORGE_TELEGRAM_TOKEN=...    # from @BotFather
+       export WE_FORGE_TELEGRAM_CHAT_ID=...
+       we-forgectl install --enable-telegram
+       we-forgectl notify-test
 
 EON
 fi
