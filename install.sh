@@ -157,21 +157,22 @@ else
   _say "backing up settings.json → $BACKUP"
   _run "cp -f \"$SETTINGS\" \"$BACKUP\""
 
-  _say "merging Stop-hook telemetry entry via jq"
+  _say "merging Stop and SubagentStop telemetry entries via jq"
+  # Shared merge snippet: for a given .hooks.<event> array, append the
+  # telemetry-hook command to the empty-matcher group if not already there,
+  # or create that group if no empty-matcher group exists.
   MERGE_EXPR='
-    .hooks //= {} |
-    .hooks.Stop //= [] |
-    .hooks.Stop |= (
+    def merge_telemetry(cmd):
       if (length == 0) then
-        [{matcher:"", hooks:[{type:"command", command:"~/.claude/hooks/stop-telemetry.sh"}]}]
+        [{matcher:"", hooks:[{type:"command", command:cmd}]}]
       else
         ( map(
             if (.matcher == "" or .matcher == null)
             then .hooks = (
               (.hooks // [])
-              | if (map(.command) | index("~/.claude/hooks/stop-telemetry.sh"))
+              | if (map(.command) | index(cmd))
                 then .
-                else . + [{type:"command", command:"~/.claude/hooks/stop-telemetry.sh"}]
+                else . + [{type:"command", command:cmd}]
                 end
             )
             else .
@@ -180,10 +181,14 @@ else
         ) as $arr
         | if ($arr | any(.matcher == "" or .matcher == null))
           then $arr
-          else $arr + [{matcher:"", hooks:[{type:"command", command:"~/.claude/hooks/stop-telemetry.sh"}]}]
+          else $arr + [{matcher:"", hooks:[{type:"command", command:cmd}]}]
           end
-      end
-    )
+      end;
+    .hooks //= {} |
+    .hooks.Stop //= [] |
+    .hooks.Stop |= merge_telemetry("~/.claude/hooks/stop-telemetry.sh") |
+    .hooks.SubagentStop //= [] |
+    .hooks.SubagentStop |= merge_telemetry("~/.claude/hooks/stop-telemetry.sh")
   '
   if [ "$DRY_RUN" = "1" ]; then
     echo "  DRY: jq merge preview:"

@@ -7,6 +7,14 @@
           { "type": "command", "command": "~/.claude/hooks/stop-telemetry.sh" }
         ]
       }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "~/.claude/hooks/stop-telemetry.sh" }
+        ]
+      }
     ]
   }
 }

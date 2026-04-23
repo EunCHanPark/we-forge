@@ -85,20 +85,89 @@ _rotate_events() {
 }
 
 _emit_event() {
-  # $1 source  $2 raw  — session_id is "cron" for fallback-captured lines.
-  local source="$1" raw="$2"
+  # $1 source  $2 raw  $3 session_id (optional, default "cron")
+  local source="$1" raw="$2" sid="${3:-cron}"
   [ -z "$raw" ] && return 0
   if ! printf '%s\n' "$raw" | bash "$REDACT_LIB" --check >/dev/null 2>&1; then
     return 0
   fi
   python3 -c '
 import json, sys
-ts, source, raw = sys.argv[1], sys.argv[2], sys.argv[3]
+ts, source, raw, sid = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 print(json.dumps({
-    "ts": ts, "session_id": "cron", "source": source,
+    "ts": ts, "session_id": sid, "source": source,
     "raw": raw, "normalized": None
 }))
-' "$(_now)" "$source" "$raw" >> "$EVENTS" 2>/dev/null || true
+' "$(_now)" "$source" "$raw" "$sid" >> "$EVENTS" 2>/dev/null || true
+}
+
+_transcript_catch_up() {
+  # Fallback for sessions where Stop hook didn't fire (Claude Code crash,
+  # SIGKILL, terminal close without clean exit, etc.). Scans all project
+  # transcript .jsonl files under ~/.claude/projects/ and emits any
+  # tool_use events we haven't already captured, keyed by session_id
+  # from the transcript filename.
+  local proj_dir="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+  [ -d "$proj_dir" ] || return 0
+  local tpath sid total_lines last_off delta
+  while IFS= read -r tpath; do
+    [ -z "$tpath" ] && continue
+    sid="$(basename "$tpath" .jsonl)"
+    [ -z "$sid" ] && continue
+    total_lines=$(wc -l < "$tpath" 2>/dev/null || echo 0)
+    total_lines=${total_lines// /}
+    last_off="$(python3 -c '
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        st = json.load(f)
+    v = st.get("last_transcript_offset", {}).get(sys.argv[2], 0)
+    print(int(v) if isinstance(v, int) else 0)
+except Exception:
+    print(0)
+' "$STATE" "$sid" 2>/dev/null)"
+    last_off=${last_off//[^0-9]/}
+    last_off=${last_off:-0}
+    if [ "${total_lines:-0}" -gt "$last_off" ] 2>/dev/null; then
+      delta=$((total_lines - last_off))
+      _log "transcript catch-up: session=${sid:0:8} +$delta lines"
+      tail -n "$delta" "$tpath" 2>/dev/null | python3 -c '
+import json, sys
+for ln in sys.stdin:
+    ln = ln.strip()
+    if not ln:
+        continue
+    try:
+        obj = json.loads(ln)
+    except Exception:
+        continue
+    msg = obj.get("message") if isinstance(obj, dict) else None
+    if not isinstance(msg, dict):
+        msg = obj
+    content = msg.get("content") if isinstance(msg, dict) else None
+    if isinstance(content, list):
+        for c in content:
+            if isinstance(c, dict) and c.get("type") == "tool_use":
+                print(json.dumps({"tool": c.get("name"), "input": c.get("input", {})}))
+' 2>/dev/null | while IFS= read -r tu_json; do
+        _emit_event "transcript" "$tu_json" "$sid"
+      done
+      python3 -c '
+import json, os, sys
+path, key, value = sys.argv[1], sys.argv[2], int(sys.argv[3])
+try:
+    with open(path) as f: st = json.load(f)
+except Exception:
+    st = {}
+if not isinstance(st.get("last_transcript_offset"), dict):
+    st["last_transcript_offset"] = {}
+st["last_transcript_offset"][key] = value
+tmp = path + ".tmp"
+with open(tmp, "w") as f: json.dump(st, f)
+os.replace(tmp, path)
+' "$STATE" "$sid" "$total_lines" 2>/dev/null || true
+    fi
+  done < <(find "$proj_dir" -maxdepth 3 -name "*.jsonl" -type f 2>/dev/null)
 }
 
 _bash_history_delta() {
@@ -210,6 +279,7 @@ _main() {
   _log "tick begin"
   _rotate_events
   _bash_history_delta
+  _transcript_catch_up
 
   if [ -f "$NORMALIZE_PY" ]; then
     CLAUDE_LEARNING_DATA="$DATA_DIR" \
