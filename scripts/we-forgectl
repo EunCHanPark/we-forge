@@ -58,6 +58,7 @@ WE_FORGE_HOME  = Path(os.environ.get("WE_FORGE_HOME", str(Path.home() / ".we-for
 CONFIG_FILE    = WE_FORGE_HOME / "config.json"
 BACKUP_DIR     = WE_FORGE_HOME / "backup"
 DAEMON_PID     = WE_FORGE_HOME / "daemon.pid"
+ECC_TRACE_FILE = WE_FORGE_HOME / "ecc-trace.jsonl"
 
 # Service identifiers
 SERVICE_LABEL_MACOS  = "com.we-forge.daemon"
@@ -509,11 +510,14 @@ class TelegramNotifier:
             return self._cmd_last_tick()
         if cmd in ("/status", "/health"):
             return self._cmd_status()
+        if cmd in ("/ecc_trace", "/ecc"):
+            return self._cmd_ecc_trace()
         if cmd in ("/help", "/start"):
             return ("we-forge bot commands:\n"
                     "/skill_report — top patterns + ECC matches\n"
                     "/last_tick — last tick log tail\n"
                     "/status — service status\n"
+                    "/ecc_trace — ECC marketplace skill usage history\n"
                     "/dashboard — dashboard URL")
         return f"unknown command: {cmd}\nsend /help for the full list"
 
@@ -554,6 +558,25 @@ class TelegramNotifier:
         return (f"*we-forge status*: `{s}`\n"
                 f"mode: `{cfg.get('mode', 'scheduled')}`\n"
                 f"telegram: `{'enabled' if cfg.get('telegram_enabled') else 'disabled'}`")
+
+    def _cmd_ecc_trace(self) -> str:
+        if not ECC_TRACE_FILE.exists():
+            return "no ECC trace yet — agent will populate as it leverages skills"
+        from collections import Counter
+        entries = []
+        with ECC_TRACE_FILE.open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        entries.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+        counter = Counter(e.get("skill", "?") for e in entries)
+        lines = [f"*ECC skill usage* ({len(entries)} records)", ""]
+        for skill, n in counter.most_common(15):
+            lines.append(f"  `{n:>3}` {skill}")
+        return "\n".join(lines)
 
 def get_notifier():
     cfg = load_config()
@@ -706,6 +729,65 @@ def tui() -> int:
 
 # ----------------------------------------------------------------------------
 # Subcommand implementations
+# ----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# ECC trace — record + report which ECC marketplace skills are used
+# ----------------------------------------------------------------------------
+
+def cmd_ecc_log(skill: str, reason: str, invoker: str = "cli") -> int:
+    """Append one ECC usage record to ~/.we-forge/ecc-trace.jsonl."""
+    if not skill:
+        fail("skill name required")
+        return 2
+    WE_FORGE_HOME.mkdir(parents=True, exist_ok=True)
+    record = {
+        "ts":      now_iso(),
+        "skill":   skill.strip(),
+        "reason":  reason.strip()[:200],
+        "invoker": invoker,
+    }
+    with ECC_TRACE_FILE.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    ok(f"logged: {skill}")
+    return 0
+
+def cmd_ecc_trace(last_n: int = 20, group: bool = False) -> int:
+    """Show ECC usage history, newest first.
+
+    --group displays counts per skill instead of the timeline.
+    """
+    if not ECC_TRACE_FILE.exists():
+        warn(f"no ECC trace yet: {ECC_TRACE_FILE}")
+        info("the we-forge agent (or CLI) calls 'we-forgectl ecc-log <skill> <reason>'")
+        info("each time it leverages an ECC marketplace skill.")
+        return 0
+    entries = []
+    with ECC_TRACE_FILE.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    if group:
+        from collections import Counter
+        c = Counter(e.get("skill", "?") for e in entries)
+        step(f"ECC skill usage (totals across {len(entries)} records)")
+        for skill, n in c.most_common():
+            print(f"  {n:>4}  {skill}")
+        return 0
+    step(f"ECC trace (last {last_n} of {len(entries)})")
+    for e in entries[-last_n:]:
+        ts     = e.get("ts", "?")
+        skill  = e.get("skill", "?")
+        reason = e.get("reason", "")[:80]
+        invk   = e.get("invoker", "?")
+        print(f"  {ts}  {DIM}[{invk}]{RESET}  {GREEN}{skill}{RESET}  {reason}")
+    return 0
+
 # ----------------------------------------------------------------------------
 
 def cmd_install(enable_telegram: bool, daemon: bool) -> int:
@@ -920,6 +1002,20 @@ def main() -> int:
     p_logs = sp.add_parser("logs", help="tail recent service logs")
     p_logs.add_argument("-n", type=int, default=30)
 
+    p_ecc_log = sp.add_parser("ecc-log",
+        help="record one ECC marketplace skill usage (appends to ecc-trace.jsonl)")
+    p_ecc_log.add_argument("skill",  help="ECC skill slug (e.g. autonomous-agent-harness)")
+    p_ecc_log.add_argument("reason", nargs="?", default="",
+                           help="short reason (why this skill was leveraged)")
+    p_ecc_log.add_argument("--invoker", default="cli",
+                           help="who logged it (cli/agent/tick/bot)")
+
+    p_ecc_trace = sp.add_parser("ecc-trace",
+        help="show ECC skill usage history (which ECC skills we-forge leveraged)")
+    p_ecc_trace.add_argument("--last",  type=int, default=20)
+    p_ecc_trace.add_argument("--group", action="store_true",
+                             help="display totals per skill instead of timeline")
+
     args = p.parse_args()
     if not args.cmd:
         p.print_help()
@@ -939,6 +1035,8 @@ def main() -> int:
         if args.cmd == "notify-test":  return cmd_notify_test()
         if args.cmd == "doctor":       return cmd_doctor()
         if args.cmd == "logs":         return cmd_logs(args.n)
+        if args.cmd == "ecc-log":      return cmd_ecc_log(args.skill, args.reason, args.invoker)
+        if args.cmd == "ecc-trace":    return cmd_ecc_trace(args.last, args.group)
     except KeyboardInterrupt:
         print()
         return 130

@@ -108,6 +108,18 @@ single-line rollup when it starts to bloat.
 
 ## Rules
 
+- **ECC alignment disclosure (mandatory).** At the start of every tick
+  output, list the ECC marketplace skills that shape this run's behavior.
+  Format:
+  ```
+  ECC alignment: pattern-detector→[autonomous-agent-harness, continuous-agent-loop]
+                 quality-auditor→[safety-guard]
+                 telegram-bot→[messages-ops]
+  ```
+  Then call `we-forgectl ecc-log <skill> "<reason>"` for each skill so
+  the ECC utilization trace is recorded. This is the user's primary
+  intent for we-forge (maximize ECC marketplace utilization), so
+  visibility is non-negotiable.
 - **Respect sub-agent boundaries.** Do not read drafts yourself; the
   auditor is the sole judge. Do not synthesize inline; go through
   `skill-synthesizer` so its scoped Write permissions apply.

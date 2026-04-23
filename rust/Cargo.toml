@@ -1,0 +1,76 @@
+[package]
+name        = "we-forgectl"
+version     = "0.3.0-dev"
+edition     = "2021"
+authors     = ["yukibana"]
+description = "we-forge service & operations control (Rust port of the Python single-file CLI)"
+license     = "MIT"
+repository  = "https://github.com/EunCHanPark/we-forge"
+readme      = "README.md"
+
+# ECC alignment for this crate (recorded at compile time so the binary itself
+# advertises which marketplace skills it implements):
+#   autonomous-agent-harness — persistent daemon + Claude Code agent invocation
+#   enterprise-agent-ops     — lifecycle management (start/stop/restart/status)
+#   safety-guard             — backup-before-destroy on uninstall
+#   dashboard-builder        — operator-question dashboard (delegated)
+#   messages-ops             — Telegram notifier patterns
+#   continuous-agent-loop    — daemon polling pattern
+#   rust-patterns            — idiomatic ownership / error handling / traits
+#   rust-build               — cargo error remediation (rust-build-resolver agent)
+
+[dependencies]
+# Async runtime (multi-threaded for parallel tick + telegram poll)
+tokio = { version = "1", features = [
+    "rt-multi-thread", "sync", "time", "process",
+    "io-util", "macros", "fs", "net", "signal",
+] }
+
+# CLI parsing
+clap = { version = "4", features = ["derive"] }
+
+# JSON config + Telegram API responses
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# HTTP client for Telegram Bot API (rustls so we don't drag in OpenSSL)
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
+# Cross-platform user dirs (~/Library/LaunchAgents, ~/.config/systemd/user, etc.)
+dirs = "5"
+
+# ISO-8601 timestamps for ledger / ecc-trace / daemon log
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
+
+# Terminal UI (ratatui) — same as cokacctl
+ratatui   = "0.28"
+crossterm = "0.28"
+
+# Logging
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# Atomic file writes (used by service/launchd.rs and core/config.rs)
+tempfile = "3"
+
+# Anyhow for unstructured error propagation in CLI handlers
+anyhow = "1"
+
+# Unix-only (launchctl interaction, file mode bits)
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# Windows-only (Task Scheduler — we still shell out to PowerShell for now;
+# native COM interface is a v0.4 follow-up)
+[target.'cfg(windows)'.dependencies]
+
+[[bin]]
+name = "we-forgectl"
+path = "src/main.rs"
+
+[profile.release]
+opt-level     = 3
+lto           = true
+codegen-units = 1
+strip         = true
+panic         = "abort"
