@@ -1,4 +1,4 @@
-# ehforge-ultraplan
+# we-forge
 
 24/7 monitoring + repetitive pattern auto-learning system for the
 ECC harness. Captures bash history, Claude transcripts, and Stop-hook

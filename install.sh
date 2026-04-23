@@ -44,6 +44,11 @@ _say()  { printf '==> %s\n' "$*"; }
 _warn() { printf 'warn: %s\n' "$*" >&2; }
 _die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
 
+# Host detection for per-platform post-install guidance.
+_is_wsl()   { grep -qi microsoft /proc/version 2>/dev/null || [ -n "${WSL_DISTRO_NAME:-}" ]; }
+_is_macos() { [ "$(uname -s)" = "Darwin" ]; }
+_is_linux() { [ "$(uname -s)" = "Linux" ] && ! _is_wsl; }
+
 _run() {
   if [ "$DRY_RUN" = "1" ]; then
     printf '  DRY: %s\n' "$*"
@@ -125,7 +130,7 @@ _copy "$REPO_DIR/learning/tick.sh"      "$CLAUDE_HOME/learning/tick.sh"
 
 _copy "$REPO_DIR/hooks/stop-telemetry.sh" "$CLAUDE_HOME/hooks/stop-telemetry.sh"
 
-for a in monitor-sentinel pattern-detector skill-synthesizer quality-auditor; do
+for a in monitor-sentinel pattern-detector skill-synthesizer quality-auditor we-forge; do
   _copy "$REPO_DIR/agents/$a.md" "$CLAUDE_HOME/agents/$a.md"
 done
 

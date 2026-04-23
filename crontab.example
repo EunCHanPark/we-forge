@@ -1,4 +1,4 @@
-# ehforge-ultraplan — 24/7 pattern-learning cron entry
+# we-forge — 24/7 pattern-learning cron entry
 #
 # Paste this line into `crontab -e`. Runs every hour at :00.
 # tick.sh is single-instance-locked via a mkdir-based lock so a second firing

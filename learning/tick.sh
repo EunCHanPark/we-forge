@@ -155,7 +155,7 @@ _invoke_watch_and_learn() {
     _log "claude CLI not on PATH; skipping synthesis"
     return 0
   fi
-  _log "invoking claude -p /watch-and-learn (timeout=${TIMEOUT}s)"
+  _log "invoking claude --agent we-forge -p tick (timeout=${TIMEOUT}s)"
   local tcmd=""
   if command -v timeout >/dev/null 2>&1; then tcmd="timeout ${TIMEOUT}"
   elif command -v gtimeout >/dev/null 2>&1; then tcmd="gtimeout ${TIMEOUT}"
@@ -169,9 +169,13 @@ _invoke_watch_and_learn() {
     #   - pre:observe:continuous-learning    — duplicate-watch; we already capture
     # Scoped to this subshell only; parent shell / cron env are unaffected.
     export ECC_DISABLED_HOOKS="pre:bash:gateguard-fact-force,pre:edit-write:gateguard-fact-force,pre:observe:continuous-learning"
+    # Run as the we-forge main-session agent so it has persistent memory at
+    # ~/.claude/agent-memory/we-forge/. The /watch-and-learn slash command
+    # remains available for interactive triggering; this headless path uses
+    # the agent path to accumulate cross-run learnings.
     # shellcheck disable=SC2086
-    $tcmd claude -p "/watch-and-learn" >>"$LOG" 2>&1
-  ) || _log "claude -p returned non-zero (ignored)"
+    $tcmd claude --agent we-forge -p "tick" >>"$LOG" 2>&1
+  ) || _log "claude --agent we-forge returned non-zero (ignored)"
 }
 
 _main() {
