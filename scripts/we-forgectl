@@ -571,7 +571,18 @@ def get_notifier():
 
 def daemon_loop() -> int:
     """Long-running loop: tick every WE_FORGE_DAEMON_INTERVAL seconds, plus
-    optional Telegram bot polling (if enabled)."""
+    optional Telegram bot polling (if enabled).
+
+    Critical: when stdout is redirected to a file (launchd / systemd), Python's
+    print() is BLOCK-buffered, not line-buffered. Reconfigure to line buffering
+    so daemon.log shows progress in real time.
+    """
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+        sys.stderr.reconfigure(line_buffering=True)
+    except (AttributeError, OSError):
+        pass
+
     WE_FORGE_HOME.mkdir(parents=True, exist_ok=True)
     DAEMON_PID.write_text(str(os.getpid()), encoding="utf-8")
     print(f"[{now_iso()}] we-forge daemon starting (pid={os.getpid()}, interval={DAEMON_INTERVAL}s)")
@@ -579,15 +590,28 @@ def daemon_loop() -> int:
     if notifier:
         print(f"[{now_iso()}] Telegram notifier enabled")
         notifier.send("🔧 we-forge daemon started")
-    last_tick = 0.0
+
+    # Initialize last_tick to NOW so first iteration polls Telegram instead of
+    # running a tick. Otherwise the first tick (which can take up to 10 min via
+    # `claude --agent we-forge -p tick`) blocks Telegram polling and the bot
+    # appears unresponsive on startup.
+    last_tick = time.time()
+
     try:
         while True:
             now = time.time()
             if now - last_tick >= DAEMON_INTERVAL:
                 print(f"[{now_iso()}] tick begin")
-                rc = run_tick_once()
-                print(f"[{now_iso()}] tick end (rc={rc})")
+                # Run tick in background thread so Telegram polling doesn't block.
+                # Tick takes 0–10 min; we want bot responsive throughout.
+                import threading
+                tick_thread = threading.Thread(
+                    target=lambda: print(f"[{now_iso()}] tick end (rc={run_tick_once()})"),
+                    daemon=True,
+                )
+                tick_thread.start()
                 last_tick = now
+
             if notifier:
                 updates = notifier.poll(timeout=25)
                 for u in updates:
@@ -597,6 +621,7 @@ def daemon_loop() -> int:
                     if chat_id != notifier.chat_id:
                         continue
                     if text.startswith("/"):
+                        print(f"[{now_iso()}] handling command: {text}")
                         reply = notifier.handle_command(text)
                         notifier.send(reply)
             else:
