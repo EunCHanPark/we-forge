@@ -134,7 +134,7 @@ for a in monitor-sentinel pattern-detector skill-synthesizer quality-auditor we-
   _copy "$REPO_DIR/agents/$a.md" "$CLAUDE_HOME/agents/$a.md"
 done
 
-for c in watch-and-learn skill-report; do
+for c in watch-and-learn skill-report ask-codex ask-gemini; do
   _copy "$REPO_DIR/commands/$c.md" "$CLAUDE_HOME/commands/$c.md"
 done
 
