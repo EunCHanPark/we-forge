@@ -69,6 +69,14 @@ pub mod launchd {
     pub const LABEL: &str = "com.we-forge.daemon";
     pub const LEGACY_LABELS: &[&str] = &["com.yukibana.we-forge-tick"];
 
+    /// getuid() — only meaningful on Unix. Returns 0 stub on non-Unix
+    /// (Windows would never construct LaunchdManager anyway, but the code
+    /// must compile for cross-platform builds).
+    #[cfg(unix)]
+    fn get_uid() -> u32 { unsafe { libc::getuid() } }
+    #[cfg(not(unix))]
+    fn get_uid() -> u32 { 0 }
+
     pub struct LaunchdManager {
         pub plist:   PathBuf,
         pub log_dir: PathBuf,
@@ -77,11 +85,10 @@ pub mod launchd {
 
     impl LaunchdManager {
         pub fn new() -> Self {
-            let uid = unsafe { libc::getuid() };
             Self {
                 plist:   paths::macos_launch_agents().join(format!("{}.plist", LABEL)),
                 log_dir: paths::macos_log_dir(),
-                uid,
+                uid:     get_uid(),
             }
         }
 
