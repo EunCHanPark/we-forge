@@ -56,9 +56,14 @@ description: Use when ...   # trigger-shaped, <=160 chars
   "samples": ["git status"],
   "sample_session_ids": ["sess-A","sess-B","sess-C"],
   "synthesized_at": "2026-04-23T12:00:00Z",
-  "source_queue_entry": {"count": 5, "rationale": "..."}
+  "source_queue_entry": {"count": 5, "revise_count": 0, "rationale": "..."}
 }
 ```
+
+**`source_queue_entry.revise_count` must be copied verbatim from the
+input candidate's `revise_count` field.** The auditor reads this to decide
+REJECT after 2 revises; if you stamp `0` here when the real count is
+higher, a broken draft loops forever.
 
 ## Rules
 

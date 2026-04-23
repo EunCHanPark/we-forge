@@ -247,7 +247,10 @@ def main(argv: list[str]) -> int:
         print("normalize: events=0 patterns=0")
         return 0
 
-    rewritten: list[str] = []
+    # Treat events.jsonl as append-only. Do NOT rewrite it: stop-telemetry.sh
+    # may hold an O_APPEND fd open and have an event mid-flight when tick.sh
+    # runs; an atomic rewrite here would orphan that event on the old inode
+    # and cause silent data loss. Canonicalization is recomputed per tick.
     valid_events: list[dict] = []
     dropped_secret = 0
     for ev in events:
@@ -257,10 +260,7 @@ def main(argv: list[str]) -> int:
             continue
         if not ev.get("normalized"):
             ev["normalized"] = canonicalize(ev.get("source", "bash"), raw)
-        rewritten.append(json.dumps(ev, ensure_ascii=False))
         valid_events.append(ev)
-
-    _atomic_write(events_path, rewritten)
 
     # Aggregate.
     agg: dict[str, dict] = {}

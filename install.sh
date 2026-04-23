@@ -92,8 +92,16 @@ EOF
   if ! grep -q '"pattern": "git status"' "$T/claude/learning/data/promotion_queue.jsonl" 2>/dev/null; then
     _die "tick.sh did not promote 'git status' to the queue"
   fi
-  if grep -q 'sk-ant' "$T/claude/learning/data/events.jsonl" 2>/dev/null; then
-    _die "secret leaked into events.jsonl"
+  # events.jsonl is append-only (stop-telemetry's redact filter is the sole
+  # gate on what gets written). normalize.py does not scrub events.jsonl in
+  # place — doing so would race with stop-telemetry's O_APPEND fd and lose
+  # in-flight events. The real invariant is that no secret propagates
+  # DOWNSTREAM (patterns.jsonl, promotion_queue.jsonl, learned/).
+  if grep -q 'sk-ant' "$T/claude/learning/data/patterns.jsonl" 2>/dev/null; then
+    _die "secret leaked into patterns.jsonl"
+  fi
+  if grep -q 'sk-ant' "$T/claude/learning/data/promotion_queue.jsonl" 2>/dev/null; then
+    _die "secret leaked into promotion_queue.jsonl"
   fi
 
   _say "test: PASS"

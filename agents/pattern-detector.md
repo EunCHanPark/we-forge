@@ -47,10 +47,16 @@ Print ONLY this JSON, nothing else:
     "samples": ["git status", "git status -sb"],
     "sample_session_ids": ["sess-A","sess-B","sess-C"],
     "total_count": 5,
+    "revise_count": 0,
     "rationale": "3 merged queue entries; no existing learned skill covers 'git status' diagnostics"
   }
 ]
 ```
+
+When merging near-duplicate queue entries, the candidate's `revise_count`
+is the **maximum** `revise_count` across the merged entries. This lets the
+auditor enforce its "auto-REJECT after 2 revises" rule across synthesis
+re-runs — without propagation the draft could loop indefinitely.
 
 If nothing is worth synthesizing, emit `[]`.
 
