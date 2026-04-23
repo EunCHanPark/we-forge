@@ -35,6 +35,18 @@ Agent({
 Parse the returned JSON array. If it's empty, print
 `watch-and-learn: no new candidates` and stop.
 
+### Budget cap
+
+Read `CLAUDE_TICK_MAX_CANDIDATES` from the environment (default: `5`). If
+the reduced candidate list is longer, take the first `N` entries (highest
+`total_count` first — pattern-detector already ranks them) and leave the
+rest in `promotion_queue.jsonl` for the next tick. Print
+`watch-and-learn: capped candidates=<N> deferred=<M>` when capping occurs.
+
+Rationale: bounds the worst-case API spend per tick to `N` synthesizer +
+`N` auditor dispatches. A runaway noise pattern cannot cascade into a
+triple-digit dispatch on a single cron firing.
+
 ## Stage 2 — synthesize + audit per candidate (parallel when possible)
 
 ### Team path (preferred: agent-teams flag enabled)

@@ -52,6 +52,30 @@ The installer extends the existing Stop-hook matcher in
 hook you already have (e.g. `stop-hook-git-check.sh`). A timestamped
 backup is saved to `settings.json.bak.<ISO>`.
 
+### macOS: grant cron Full Disk Access
+
+On macOS (Sonoma+), `cron` cannot read `~/.bash_history`, `~/.claude/projects/*`,
+or write to `~/.claude/learning/data/` without **Full Disk Access**. Without
+it, `tick.sh` runs hourly but silently captures nothing.
+
+1. Open **System Settings → Privacy & Security → Full Disk Access**.
+2. Click the `+` button.
+3. Press `Cmd+Shift+.` to reveal hidden directories, navigate to `/usr/sbin/`,
+   and select `cron`. (If a dialog blocks `/usr/sbin`, type the path via
+   `Cmd+Shift+G`.)
+4. Ensure the toggle next to `cron` is on.
+5. Verify after the next `:00` tick:
+
+   ```bash
+   tail -n 20 ~/.claude/learning/data/tick.log
+   # Expect lines like: "[...] bash delta: +N lines (total=M)"
+   # If you see only "tick begin"/"tick end" with no delta, FDA is missing.
+   ```
+
+If cron is not present on `/usr/sbin/cron` (some minimal installs), the
+equivalent daemon is `launchd`. In that case use a `launchctl` plist
+instead of `crontab` — not covered here.
+
 ## How it works
 
 ```
