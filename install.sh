@@ -202,6 +202,10 @@ if ! find "$CLAUDE_HOME/projects" -maxdepth 3 -name '*.jsonl' 2>/dev/null | head
   _warn "This is fine on a fresh install — the Stop hook will start logging on the first Claude session."
 fi
 
+# --- per-OS post-install guidance ---
+# All paths in the generated plist / cron line derive from $CLAUDE_HOME and $HOME,
+# so the script works on any user account (no "yukibana" hardcoding).
+
 cat <<EON
 
 Next steps:
@@ -209,17 +213,72 @@ Next steps:
   1. Review the merged settings.json:
        jq .hooks.Stop "$SETTINGS"
 
-  2. Install the cron entry (not automatic):
-       crontab -e
-     then paste the line from:
-       $REPO_DIR/crontab.example
-
-  3. Verify:
+  2. Verify (any OS):
        bash $CLAUDE_HOME/learning/redact.sh --self-test
        echo '{"session_id":"t","transcript_path":"/dev/null","stop_hook_active":false,"cwd":"/tmp"}' \\
          | $CLAUDE_HOME/hooks/stop-telemetry.sh; echo "exit=\$?"
 
-  4. Full end-to-end test:
+  3. Full end-to-end test:
        $REPO_DIR/install.sh --test
 
 EON
+
+if _is_macos; then
+  PLIST_TMPL="$REPO_DIR/launchd/com.we-forge-tick.plist.template"
+  PLIST_DEST="$HOME/Library/LaunchAgents/com.$USER.we-forge-tick.plist"
+  cat <<EON
+  4. macOS scheduler — register the LaunchAgent (hourly tick):
+
+       mkdir -p ~/Library/LaunchAgents
+       sed -e "s|__USER__|$USER|g" \\
+           -e "s|__HOME__|$HOME|g" \\
+           -e "s|__CLAUDE_HOME__|$CLAUDE_HOME|g" \\
+           "$PLIST_TMPL" > "$PLIST_DEST"
+       launchctl load -w "$PLIST_DEST"
+       launchctl start com.$USER.we-forge-tick     # manual first tick
+       tail -n 5 $CLAUDE_HOME/learning/data/tick.log
+
+     Unload later with:
+       launchctl unload "$PLIST_DEST"
+
+EON
+elif _is_wsl; then
+  cat <<EON
+  4. WSL2 scheduler — enable cron inside the Linux distro:
+
+     a) Ensure cron is installed and running:
+          sudo apt-get update && sudo apt-get install -y cron
+          sudo service cron start
+          sudo systemctl enable cron 2>/dev/null || true
+
+     b) Persist cron across WSL restarts (recommended). Either:
+          - Enable systemd in WSL:
+              echo -e "[boot]\\nsystemd=true" | sudo tee -a /etc/wsl.conf
+              # then in PowerShell on the Windows side: wsl --shutdown
+          - Or add to ~/.bashrc: 'sudo service cron start'
+
+     c) Install the hourly entry:
+          crontab -e
+          # paste the line from: $REPO_DIR/crontab.example
+
+     d) Verify after :00:
+          tail -n 20 $CLAUDE_HOME/learning/data/tick.log
+
+     See $REPO_DIR/WSL-SETUP.md for the full Windows Server walkthrough.
+
+EON
+else
+  cat <<EON
+  4. Linux scheduler — cron or systemd timer:
+
+     Quickest (cron):
+       crontab -e
+       # paste the line from: $REPO_DIR/crontab.example
+
+     Modern (systemd user timer) — create
+       ~/.config/systemd/user/we-forge-tick.{service,timer}
+     and 'systemctl --user enable --now we-forge-tick.timer'. Template
+     not bundled; hand-roll if you prefer this path.
+
+EON
+fi

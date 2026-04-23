@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  we-forge LaunchAgent template.
+
+  Placeholders (install.sh substitutes these at macOS install time):
+    __USER__        - login username (e.g. yukibana)
+    __HOME__        - absolute path of $HOME (e.g. /Users/yukibana)
+    __CLAUDE_HOME__ - absolute path of ~/.claude
+
+  Generated file lives at:
+    ~/Library/LaunchAgents/com.__USER__.we-forge-tick.plist
+
+  Load:
+    launchctl load -w ~/Library/LaunchAgents/com.__USER__.we-forge-tick.plist
+  Unload:
+    launchctl unload ~/Library/LaunchAgents/com.__USER__.we-forge-tick.plist
+  Trigger manually (bypasses the hourly schedule):
+    launchctl start com.__USER__.we-forge-tick
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.__USER__.we-forge-tick</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-lc</string>
+        <string>__CLAUDE_HOME__/learning/tick.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>__CLAUDE_HOME__/learning/data/tick.log</string>
+    <key>StandardErrorPath</key>
+    <string>__CLAUDE_HOME__/learning/data/tick.log</string>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
