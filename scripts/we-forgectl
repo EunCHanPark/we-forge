@@ -463,19 +463,33 @@ class TelegramNotifier:
         self.api     = f"https://api.telegram.org/bot{token}"
         self._last_update_id = 0
 
-    def send(self, text: str) -> bool:
+    def send(self, text: str, html: bool = False) -> bool:
+        """Send a message. Default: plain text (always works, never 400s).
+        html=True only for senders that pre-formatted with <b>/<code>/<pre>
+        and escaped user content via html.escape()."""
         import urllib.parse, urllib.request
-        data = urllib.parse.urlencode({
-            "chat_id":    self.chat_id,
-            "text":       text[:4000],
-            "parse_mode": "Markdown",
-        }).encode()
+        params = {
+            "chat_id": self.chat_id,
+            "text":    text[:4000],
+        }
+        if html:
+            params["parse_mode"] = "HTML"
+        data = urllib.parse.urlencode(params).encode()
         try:
             req = urllib.request.Request(f"{self.api}/sendMessage", data=data)
             with urllib.request.urlopen(req, timeout=10) as resp:
                 return resp.status == 200
         except Exception as e:
             warn(f"telegram send failed: {e}")
+            # Fallback: retry without parse_mode if HTML parse failed
+            if html:
+                try:
+                    plain = urllib.parse.urlencode({"chat_id": self.chat_id, "text": text[:4000]}).encode()
+                    req2  = urllib.request.Request(f"{self.api}/sendMessage", data=plain)
+                    with urllib.request.urlopen(req2, timeout=10) as resp:
+                        return resp.status == 200
+                except Exception as e2:
+                    warn(f"telegram plain-text retry also failed: {e2}")
             return False
 
     def poll(self, timeout: int = 25) -> list[dict]:
@@ -537,36 +551,36 @@ class TelegramNotifier:
             spec = spec_from_file_location("dashboard", str(dashboard_path))
             mod = module_from_spec(spec); spec.loader.exec_module(mod)
             k = mod.compute_kpis()
-            lines = ["*we-forge skill report*", ""]
-            lines.append(f"events: `{k['totals']['events']}` patterns: `{k['totals']['patterns']}`")
-            lines.append(f"queue: `{k['totals']['queue']}` ledger: `{k['totals']['ledger']}`")
-            lines.append(f"ECC_MATCH ratio: `{k['ecc_match_ratio']*100:.1f}%`")
+            lines = ["we-forge skill report", "═" * 30]
+            lines.append(f"events: {k['totals']['events']}  patterns: {k['totals']['patterns']}")
+            lines.append(f"queue: {k['totals']['queue']}  ledger: {k['totals']['ledger']}")
+            lines.append(f"ECC_MATCH ratio: {k['ecc_match_ratio']*100:.1f}%")
             lines.append("")
-            lines.append("*top 5 patterns:*")
+            lines.append("top 5 patterns:")
             for pat, n in k["top_patterns"][:5]:
-                lines.append(f"  `{n}` {pat}")
+                lines.append(f"  {n:>4}  {pat}")
             return "\n".join(lines)
         except Exception as e:
             return f"report failed: {e}"
 
     def _cmd_dashboard(self) -> str:
-        return ("dashboard: `we-forgectl dashboard` (web on `http://127.0.0.1:8765`)\n"
-                "or `we-forgectl tui` (terminal)")
+        return ("dashboard: we-forgectl dashboard (web on http://127.0.0.1:8765)\n"
+                "or: we-forgectl tui (terminal)")
 
     def _cmd_last_tick(self) -> str:
         log = CLAUDE_HOME / "learning/data/tick.log"
         if not log.exists():
             return "no tick.log yet"
         lines = log.read_text(errors="replace").splitlines()[-15:]
-        return "*last tick log:*\n```\n" + "\n".join(lines) + "\n```"
+        return "last tick log:\n" + "\n".join(lines)
 
     def _cmd_status(self) -> str:
         m = manager()
         s = m.status()
         cfg = load_config()
-        return (f"*we-forge status*: `{s}`\n"
-                f"mode: `{cfg.get('mode', 'scheduled')}`\n"
-                f"telegram: `{'enabled' if cfg.get('telegram_enabled') else 'disabled'}`")
+        return (f"we-forge status: {s}\n"
+                f"mode: {cfg.get('mode', 'scheduled')}\n"
+                f"telegram: {'enabled' if cfg.get('telegram_enabled') else 'disabled'}")
 
     def _cmd_ecc_trace(self) -> str:
         if not ECC_TRACE_FILE.exists():
@@ -582,9 +596,9 @@ class TelegramNotifier:
                     except json.JSONDecodeError:
                         pass
         counter = Counter(e.get("skill", "?") for e in entries)
-        lines = [f"*ECC skill usage* ({len(entries)} records)", ""]
+        lines = [f"ECC skill usage ({len(entries)} records)", "═" * 30]
         for skill, n in counter.most_common(15):
-            lines.append(f"  `{n:>3}` {skill}")
+            lines.append(f"  {n:>3}  {skill}")
         return "\n".join(lines)
 
 def get_notifier():
