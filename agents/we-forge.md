@@ -65,23 +65,46 @@ single-line rollup when it starts to bloat.
    If the remaining candidate list is longer, take the top `N` by
    `total_count` and leave the rest for the next tick. Print
    `we-forge: capped candidates=<N> deferred=<M>` when capping occurs.
-6. **Synthesize + audit.** For each remaining candidate, dispatch
-   `skill-synthesizer` and `quality-auditor` as sub-agents. When
+6. **ECC-match diversion.** Before synthesizing, scan each candidate's
+   `rationale` field for marketplace match hints emitted by
+   `pattern-detector` (e.g. `"matches ECC marketplace skill: documentation-lookup"`).
+   For each such candidate:
+   - **Do NOT dispatch skill-synthesizer.** The user already has this skill
+     installed via the ECC marketplace; building a duplicate would
+     fragment skill discovery and contradict we-forge's purpose
+     (maximizing ECC utilization).
+   - Instead, append a record to `MEMORY.md` under a
+     `## ECC marketplace recommendations` section:
+     ```
+     <slug>  →  /everything-claude-code:<ecc-skill-name>  (count=<N>, first_seen=<date>)
+     ```
+   - Remove the candidate's queue entry (treat the same way as REJECT,
+     but log decision as `ECC_MATCH` in the ledger:
+     `{"ts":"<now>","decision":"ECC_MATCH","slug":"<slug>","ecc_skill":"<name>","rationale":"..."}`).
+   - Print `we-forge: <slug> → ECC_MATCH (/everything-claude-code:<name>)`.
+
+   These ECC matches are surfaced to the user via `/skill-report`'s
+   "ECC marketplace recommendations" section.
+
+7. **Synthesize + audit.** For each remaining (non-ECC-matched) candidate,
+   dispatch `skill-synthesizer` and `quality-auditor` as sub-agents. When
    `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` is set (it is, by default
    in this project), fire multiple candidates in a single message with
    multiple tool-use blocks for parallelism.
-7. **Record.** Append each verdict to `MEMORY.md` per the memory policy.
-8. **Update the queue.** Apply the pattern rules already documented in
+8. **Record.** Append each verdict to `MEMORY.md` per the memory policy.
+9. **Update the queue.** Apply the pattern rules already documented in
    `commands/watch-and-learn.md`:
    - PASS → remove entry.
    - REJECT → remove entry (auditor already poisoned via `rejected.txt`).
    - REVISE → rewrite entry with `revise_count += 1`. Atomic write via
      `.tmp` + `mv`.
-9. **Summary line.** Print one line per candidate and a final totals line:
+   - ECC_MATCH → remove entry (do not poison — the pattern is valid, just
+     better served by an existing marketplace skill).
+10. **Summary line.** Print one line per candidate and a final totals line:
 
-   ```
-   we-forge: processed=<N> pass=<p> revise=<r> reject=<j> skipped=<s>
-   ```
+    ```
+    we-forge: processed=<N> pass=<p> revise=<r> reject=<j> ecc_match=<e> skipped=<s>
+    ```
 
 ## Rules
 

@@ -1,0 +1,15 @@
+[Unit]
+Description=we-forge tick (hourly + 5min after boot)
+Requires=we-forge-tick.service
+
+[Timer]
+# Same cadence as crontab.example (hourly at :00) plus a catch-up 5min after
+# boot so a freshly-rebooted machine doesn't wait up to an hour for first run.
+OnBootSec=5min
+OnUnitActiveSec=1h
+AccuracySec=1min
+Persistent=true
+Unit=we-forge-tick.service
+
+[Install]
+WantedBy=timers.target

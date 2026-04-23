@@ -26,13 +26,37 @@ Learned skills, and Logs sections per your agent contract."
    tail -n 20 ~/.claude/learning/data/ledger.jsonl
    ```
 
-3. Assemble the final report with four sections **in this order**:
+3. Assemble the final report with **six** sections **in this order**:
 
    ### Telemetry
    monitor-sentinel's Telemetry + Queue sections, verbatim.
 
    ### Patterns in flight
    monitor-sentinel's "Top un-promoted patterns" section, verbatim.
+
+   ### TOP 10 frequent patterns
+   Read `~/.claude/learning/data/patterns.jsonl`, group by `pattern`, sum
+   `count`, sort descending. Print top 10:
+   ```
+   <count>  <pattern>  <slug>
+   ```
+   This is the user's *actual usage frequency* — the raw signal we-forge sees.
+
+   ### ECC marketplace recommendations
+   For each of the TOP 10 patterns above, search
+   `~/.claude/plugins/marketplaces/**/SKILL.md` for a SKILL whose
+   `name` or first 160 chars of `description` is a strong substring match
+   for the pattern (case-insensitive, ignoring `<opaque>`/`<PATH>`
+   placeholders). Print one line per match:
+   ```
+   <pattern>  →  /everything-claude-code:<skill-name>  (<one-line description>)
+   ```
+   If no marketplace skill matches a pattern, print:
+   ```
+   <pattern>  →  (no marketplace match — candidate for we-forge synthesis)
+   ```
+   This section makes the marketplace visible — the whole point of we-forge
+   is to maximize ECC utilization, and this is where the user sees ROI.
 
    ### Learned skills
    For each directory under `~/.claude/skills/learned/` (excluding

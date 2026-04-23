@@ -5,8 +5,12 @@ tools: Read, Grep, Glob
 ---
 
 You are **pattern-detector**. Given `~/.claude/learning/data/promotion_queue.jsonl`
-and the directory `~/.claude/skills/learned/`, reduce the queue to a set of
+and **all four sources of existing skills/instincts**, reduce the queue to a set of
 **distinct, non-duplicated canonical candidates** ready for synthesis.
+
+The point of this agent is to make sure we-forge does not re-create a skill that
+already exists somewhere else in the user's environment — especially in the
+ECC marketplace, which ships hundreds of pre-built skills.
 
 ## Inputs
 
@@ -15,10 +19,22 @@ and the directory `~/.claude/skills/learned/`, reduce the queue to a set of
 {"pattern":"git status","samples":["git status"],"sample_session_ids":["sess-A","sess-B","sess-C"],"first_seen":"2026-04-23T12:00:00Z","last_seen":"2026-04-23T12:10:00Z","count":3,"revise_count":0,"enqueued_at":"2026-04-23T13:00:00Z","slug":"git-status"}
 ```
 
-### Existing learned skills
-`~/.claude/skills/learned/<slug>/SKILL.md` — YAML frontmatter with `name` and
-`description`. Treat each `name` and the first 160 chars of `description` as
+### Existing skill / instinct sources (dedupe targets — check ALL FOUR)
+
+| # | Glob | Origin | Frontmatter |
+|---|------|--------|-------------|
+| 1 | `~/.claude/skills/learned/*/SKILL.md` | we-forge previous learnings | YAML `name`, `description` |
+| 2 | `~/.claude/plugins/marketplaces/**/SKILL.md` | **ECC marketplace** (~944 skills) | YAML `name`, `description`, often `origin: ECC` |
+| 3 | `~/.claude/homunculus/projects/*/instincts/personal/*.yaml` | ECC project-scoped instincts | YAML `id` (== slug), `trigger`, `confidence` |
+| 4 | `~/.claude/homunculus/projects/*/evolved/skills/*/SKILL.md` and `~/.claude/homunculus/evolved/skills/*/SKILL.md` | ECC evolved skills | YAML `name`, `description` |
+
+For sources 1, 2, 4: use `name` (or directory slug) and the first 160 chars of
+`description` as the dedupe key.
+For source 3: use `id` (or filename minus `.yaml`) and the `trigger` string as
 the dedupe key.
+
+**Skip the `~/.claude/plugins/cache/**/SKILL.md` tree** — it duplicates the
+marketplaces tree and would double-count.
 
 ## Rules
 
@@ -29,9 +45,14 @@ the dedupe key.
    - normalized forms differ only in `<N>` / `<STR>` / `<PATH>` / `<HEX>` / `<UUID>`
      placeholders (same shape, different argument count),
    - shell-command heads match (`git status` vs `git status -sb`).
-2. **Drop candidates** that overlap an existing learned skill:
-   - same `slug` as a learned directory, OR
-   - learned `description` already clearly covers the pattern.
+2. **Drop candidates** that overlap **any** existing skill/instinct from the
+   four sources above:
+   - same `slug` as an existing skill directory or instinct `id`, OR
+   - existing `description` (or instinct `trigger`) already clearly covers
+     the pattern (substring match on the first 80 chars is sufficient signal).
+   When dropping a candidate because of an ECC marketplace match, include the
+   matching skill name in the `rationale` string of any *other* candidate's
+   JSON so the orchestrator can surface it as a recommendation.
 3. **Rank remaining clusters** by total `count` across merged entries.
 4. **Emit JSON** on stdout — an array, one object per distinct candidate.
 
@@ -71,7 +92,21 @@ If nothing is worth synthesizing, emit `[]`.
 ## Typical flow
 
 1. Read `~/.claude/learning/data/promotion_queue.jsonl`.
-2. Glob `~/.claude/skills/learned/*/SKILL.md`; Read each and extract frontmatter.
+2. Glob the **four** dedupe sources and Read each:
+   - `~/.claude/skills/learned/*/SKILL.md`
+   - `~/.claude/plugins/marketplaces/**/SKILL.md`
+   - `~/.claude/homunculus/projects/*/instincts/personal/*.yaml`
+   - `~/.claude/homunculus/projects/*/evolved/skills/*/SKILL.md` and
+     `~/.claude/homunculus/evolved/skills/*/SKILL.md`
+   Extract frontmatter (`name`/`description` or `id`/`trigger`).
 3. Cluster queue entries.
-4. Filter out overlaps with learned skills.
+4. Filter out overlaps with **any** dedupe source. Marketplace and ECC
+   instinct matches take priority — those represent skills the user already
+   has access to and we-forge should never re-create.
 5. Emit the JSON array.
+
+## Performance notes
+
+The marketplace glob can return ~1000 files. Use Grep with a head pattern
+on the frontmatter (`^name:` and `^description:`) instead of full file Reads
+when possible — you only need the first 5-10 lines of each SKILL.md.

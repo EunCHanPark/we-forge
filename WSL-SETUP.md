@@ -1,8 +1,26 @@
-# we-forge on Windows Server (via WSL2)
+# we-forge on Windows (via WSL2)
 
-This guide walks through installing we-forge on a Windows Server host by running
-it inside a WSL2 Ubuntu distro. The scheduler is **cron inside WSL2**, not the
-Windows Task Scheduler (our scripts are POSIX bash).
+This guide walks through installing we-forge on Windows (10/11 or Windows
+Server) by running it inside a WSL2 Linux distro.
+
+## TL;DR — recommended path: `install.ps1`
+
+Open PowerShell and run:
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/EunCHanPark/we-forge/main/install.ps1 | iex
+```
+
+The PowerShell installer:
+
+1. Verifies WSL2 is installed (with instructions if missing)
+2. Clones we-forge into WSL2 and runs `install.sh`
+3. Registers a **Windows Task Scheduler** job that fires hourly via
+   `wsl.exe -- bash ~/.claude/learning/tick.sh` — runs even when no WSL2
+   terminal is open
+
+Use the manual steps below only if you want fine-grained control or are
+running on Windows Server with restricted execution policies.
 
 ## Prerequisites
 

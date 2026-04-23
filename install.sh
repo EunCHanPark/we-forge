@@ -2,22 +2,57 @@
 # install.sh — idempotent installer for the 24/7 pattern-learning system.
 #
 # Usage:
-#   ./install.sh           # install into ~/.claude/ (default)
-#   ./install.sh --test    # run redact self-test + tick.sh dry-run fixture
-#   ./install.sh --dry-run # show what would happen, write nothing
+#   # Local (after `git clone`):
+#   ./install.sh                    # install into ~/.claude/ (default)
+#   ./install.sh --test             # redact self-test + tick.sh dry-run fixture
+#   ./install.sh --dry-run          # show what would happen, write nothing
+#   ./install.sh --branch <name>    # use a specific branch when curl-piped
+#
+#   # Remote (one-line, no clone needed):
+#   curl -fsSL https://raw.githubusercontent.com/EunCHanPark/we-forge/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/EunCHanPark/we-forge/main/install.sh | bash -s -- --dry-run
 #
 # Env:
-#   CLAUDE_HOME   override install prefix (default: $HOME/.claude)
+#   CLAUDE_HOME       override install prefix (default: $HOME/.claude)
+#   WE_FORGE_REPO     override clone URL when curl-piped (default: github EunCHanPark/we-forge)
+#   WE_FORGE_BRANCH   override branch when curl-piped (default: main)
 #
 # Side effects:
+#   - clone the repo into a tmp dir IF run via curl-pipe (no local checkout)
 #   - mkdir the ECC dir tree under $CLAUDE_HOME
-#   - copy agents/, commands/, hooks/, learning/ into place
+#   - copy agents/, commands/, hooks/, learning/, dashboard/ into place
 #   - seed empty data files in $CLAUDE_HOME/learning/data/
 #   - jq-merge the Stop-hook entry into $CLAUDE_HOME/settings.json
 #     (existing entries preserved; previous file backed up to settings.json.bak.<ISO>)
-#   - print the crontab line; does NOT modify the user's crontab
+#   - print the crontab/launchd/systemd line; does NOT modify the user's scheduler
 
 set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Curl-pipe self-bootstrap: if BASH_SOURCE is empty, /dev/fd/*, or otherwise
+# unreadable as a file, we were piped via `curl ... | bash`. In that case
+# clone the repo into a tmp dir and re-exec ourselves from there.
+# ---------------------------------------------------------------------------
+_BOOTSTRAP_SOURCE="${BASH_SOURCE[0]:-}"
+if [ -z "$_BOOTSTRAP_SOURCE" ] || [ ! -r "$_BOOTSTRAP_SOURCE" ] || \
+   [[ "$_BOOTSTRAP_SOURCE" == /dev/fd/* ]] || [[ "$_BOOTSTRAP_SOURCE" == /proc/self/fd/* ]]; then
+  WE_FORGE_REPO="${WE_FORGE_REPO:-https://github.com/EunCHanPark/we-forge.git}"
+  WE_FORGE_BRANCH="${WE_FORGE_BRANCH:-main}"
+  # Allow overriding branch on the command line BEFORE we re-exec
+  for arg in "$@"; do
+    case "$arg" in
+      --branch=*) WE_FORGE_BRANCH="${arg#--branch=}" ;;
+    esac
+  done
+  for tool in git bash; do
+    command -v "$tool" >/dev/null || { echo "missing: $tool" >&2; exit 1; }
+  done
+  _TMP="$(mktemp -d "${TMPDIR:-/tmp}/we-forge-install-XXXXXX")"
+  echo "==> bootstrapping: cloning $WE_FORGE_REPO (branch $WE_FORGE_BRANCH) into $_TMP"
+  git clone --depth 1 --branch "$WE_FORGE_BRANCH" "$WE_FORGE_REPO" "$_TMP" >/dev/null
+  chmod +x "$_TMP/install.sh" "$_TMP/verify.sh" "$_TMP/learning"/*.sh "$_TMP/hooks"/*.sh 2>/dev/null || true
+  exec bash "$_TMP/install.sh" "$@"
+fi
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
@@ -29,6 +64,7 @@ for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
     --test)    TEST_MODE=1 ;;
+    --branch=*) ;;  # already consumed by curl-pipe self-bootstrap above
     -h|--help)
       sed -n '1,/^$/p' "$0" | sed -n 's/^# \{0,1\}//p'
       exit 0

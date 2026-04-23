@@ -1,0 +1,25 @@
+[Unit]
+# we-forge tick — runs the pattern-learning hot path once.
+# Triggered by we-forge-tick.timer (do not run directly via Wants=).
+Description=we-forge pattern-learning tick
+After=network.target
+
+[Service]
+Type=oneshot
+
+# REPLACE __HOME__ with the absolute path to the user's home directory
+# (the installer does this automatically; if installing manually, run
+#   sed -i "s|__HOME__|$HOME|g" we-forge-tick.service
+# before copying into ~/.config/systemd/user/).
+ExecStart=/usr/bin/env bash __HOME__/.claude/learning/tick.sh
+
+# tick.sh acquires its own mkdir-based lock, so concurrency is safe,
+# but we still bound runtime to keep failed runs from piling up.
+TimeoutStartSec=600
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+# Logs go to journalctl --user -u we-forge-tick.service
+StandardOutput=journal
+StandardError=journal
