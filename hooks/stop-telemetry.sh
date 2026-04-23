@@ -27,7 +27,17 @@ DATA_DIR="${CLAUDE_LEARNING_DATA:-$CLAUDE_HOME/learning/data}"
 EVENTS="$DATA_DIR/events.jsonl"
 STATE="$DATA_DIR/state.json"
 LOG="$DATA_DIR/telemetry.log"
-BASH_HIST="${BASH_HISTFILE_OVERRIDE:-$HOME/.bash_history}"
+# Auto-detect the shell history file (see tick.sh for rationale):
+#   explicit override > ~/.bash_history > ~/.zsh_history > (missing fallback)
+if [ -n "${BASH_HISTFILE_OVERRIDE:-}" ]; then
+  BASH_HIST="$BASH_HISTFILE_OVERRIDE"
+elif [ -r "$HOME/.bash_history" ]; then
+  BASH_HIST="$HOME/.bash_history"
+elif [ -r "$HOME/.zsh_history" ]; then
+  BASH_HIST="$HOME/.zsh_history"
+else
+  BASH_HIST="$HOME/.bash_history"
+fi
 
 REDACT_LIB="${CLAUDE_REDACT_LIB:-$CLAUDE_HOME/learning/redact.sh}"
 

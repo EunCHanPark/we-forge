@@ -28,7 +28,23 @@ DATA_DIR="${CLAUDE_LEARNING_DATA:-$CLAUDE_HOME/learning/data}"
 LEARNING_DIR="${CLAUDE_LEARNING_DIR:-$CLAUDE_HOME/learning}"
 REDACT_LIB="${CLAUDE_REDACT_LIB:-$LEARNING_DIR/redact.sh}"
 NORMALIZE_PY="${CLAUDE_NORMALIZE_PY:-$LEARNING_DIR/normalize.py}"
-BASH_HIST="${BASH_HISTFILE_OVERRIDE:-$HOME/.bash_history}"
+# Auto-detect the shell history file:
+#   1. explicit override wins (used by install.sh --test with a fixture)
+#   2. ~/.bash_history if readable
+#   3. ~/.zsh_history if readable (macOS default since Catalina)
+#   4. fall back to ~/.bash_history (likely missing; handled by readability
+#      guard downstream — silent no-op, not a crash)
+# The zsh extended history format ": 1700000000:0;command" is already
+# parsed by the `${line#: *:*;}` expansion below, so no format branch needed.
+if [ -n "${BASH_HISTFILE_OVERRIDE:-}" ]; then
+  BASH_HIST="$BASH_HISTFILE_OVERRIDE"
+elif [ -r "$HOME/.bash_history" ]; then
+  BASH_HIST="$HOME/.bash_history"
+elif [ -r "$HOME/.zsh_history" ]; then
+  BASH_HIST="$HOME/.zsh_history"
+else
+  BASH_HIST="$HOME/.bash_history"
+fi
 
 EVENTS="$DATA_DIR/events.jsonl"
 QUEUE="$DATA_DIR/promotion_queue.jsonl"
