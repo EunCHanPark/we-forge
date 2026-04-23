@@ -522,10 +522,19 @@ class TelegramNotifier:
         return f"unknown command: {cmd}\nsend /help for the full list"
 
     def _cmd_report(self) -> str:
+        # Locate dashboard.py — handle the case where we-forgectl was copied to
+        # ~/.local/bin/ (so __file__.parent.parent is ~/.local/, not the repo).
+        candidates = [
+            Path(__file__).resolve().parent.parent / "dashboard" / "dashboard.py",
+            Path.home() / "we-forge" / "dashboard" / "dashboard.py",
+            Path("/Users/yukibana/we-forge/dashboard/dashboard.py"),
+        ]
+        dashboard_path = next((p for p in candidates if p.exists()), None)
+        if not dashboard_path:
+            return f"report failed: dashboard.py not found in {[str(p) for p in candidates]}"
         try:
             from importlib.util import spec_from_file_location, module_from_spec
-            spec = spec_from_file_location("dashboard",
-                str(Path(__file__).parent.parent / "dashboard" / "dashboard.py"))
+            spec = spec_from_file_location("dashboard", str(dashboard_path))
             mod = module_from_spec(spec); spec.loader.exec_module(mod)
             k = mod.compute_kpis()
             lines = ["*we-forge skill report*", ""]
