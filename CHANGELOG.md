@@ -6,6 +6,38 @@ All notable changes to we-forge are documented in this file. Format follows
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-04-24
+
+Security patch + Windows installer DX fix.
+
+### Security
+- **Bumped `ratatui` 0.28 → 0.30** to drop transitive dependency on
+  `lru < 0.16.3` (RUSTSEC-2026-0002 / GHSA-rhfx-m35p-ff5j — low severity
+  Stacked Borrows soundness issue in `lru::IterMut`). Now uses
+  `lru = 0.16.4` (patched). ratatui 0.30 also splits into
+  `ratatui-core` + `ratatui-widgets` for cleaner deps.
+
+### Windows install UX
+- **`install.ps1` rewritten as a true one-line native installer**.
+  Previous version required clone + WSL2; new version downloads the
+  release binary directly, registers user-scope PATH, and runs
+  `we-forgectl install` end-to-end. Old WSL flow preserved as
+  `install.ps1.wsl-fallback.bak`.
+- **Release zip repackaged** so the inner file is `we-forgectl.exe`
+  (was `we-forgectl-x86_64-pc-windows-gnu.exe`) — matches the executable
+  name users expect after extraction.
+- **README Windows section** simplified to true one-liner with optional
+  flags documented.
+
+### Files changed (4)
+
+| Path | Change |
+|------|--------|
+| `rust/Cargo.toml` | ratatui 0.28 → 0.30, version 0.4.0 → 0.4.1 |
+| `rust/Cargo.lock` | regenerated; lru 0.12.5 → 0.16.4 |
+| `install.ps1` | rewritten for native binary install (WSL fallback as `.bak`) |
+| `README.md` | Windows section simplified to true one-liner |
+
 ## [0.4.0] — 2026-04-24
 
 we-forge agent v2 — production-ready learning loop with full audit trail,
