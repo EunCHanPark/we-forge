@@ -6,6 +6,62 @@ All notable changes to we-forge are documented in this file. Format follows
 
 ## [Unreleased]
 
+## [0.4.4] — 2026-04-24
+
+Auto-disable noisy ECC gateguard hooks on install. Solves the DX problem
+where fresh we-forge installs on other PCs would get every Edit/Write/Bash
+blocked by fact-force prompts, requiring manual authorization per action.
+
+### Why
+
+The ECC marketplace plugin ships several aggressive pre-action hooks:
+
+- `pre:edit-write:gateguard-fact-force` — forces 4-question "facts" disclosure
+  before every Edit/Write
+- `pre:bash:dispatcher` — generic bash pre-gate
+- `pre:edit-write:suggest-compact` — periodic compaction nag
+
+These are fine for paranoid code review but break productive use of we-forge
+tools (which call `we-forgectl`, edit config files, update hooks, etc.).
+Without disabling them, a fresh install requires the model to answer fact-force
+questions on *every single action*, making we-forge effectively unusable
+in interactive sessions until the user manually sets the env var.
+
+### Fix
+
+- **`learning/settings.snippet.json`**: adds `env.ECC_DISABLED_HOOKS` with
+  the three problematic hook IDs as default.
+- **`install.sh`**: jq merge now unions with any existing
+  `env.ECC_DISABLED_HOOKS` (preserves user additions, adds ours).
+- **`install.ps1`**: same merge logic for Windows native installer.
+- **Rust `Cargo.toml`**: version 0.4.3 → 0.4.4.
+
+### Behavior change
+
+After running `install.sh` or `install.ps1`, `~/.claude/settings.json` will
+contain:
+```json
+{
+  "env": {
+    "ECC_DISABLED_HOOKS": "pre:bash:dispatcher,pre:edit-write:gateguard-fact-force,pre:edit-write:suggest-compact"
+  },
+  ...
+}
+```
+
+Re-install is idempotent: if user already set some ECC_DISABLED_HOOKS, our
+entries are merged (unique union), not overwritten.
+
+### Files changed
+
+| Path | Change |
+|------|--------|
+| `learning/settings.snippet.json` | +`env.ECC_DISABLED_HOOKS` |
+| `install.sh` | +env merge in jq expression |
+| `install.ps1` | +env merge in jq expression (Windows branch) |
+| `rust/Cargo.toml` | version 0.4.3 → 0.4.4 |
+| `CHANGELOG.md` | this entry |
+
 ## [0.4.3] — 2026-04-24
 
 Telegram bot reliability fix + `/status` shows active Claude Code sessions.

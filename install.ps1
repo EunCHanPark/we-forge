@@ -203,6 +203,9 @@ if (-not $jq) {
 } elseif (-not (Test-Path $SettingsFile)) {
     $snippet = @'
 {
+  "env": {
+    "ECC_DISABLED_HOOKS": "pre:edit-write:gateguard-fact-force,pre:bash:dispatcher,pre:edit-write:suggest-compact"
+  },
   "hooks": {
     "SessionStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": "~/.claude/hooks/sessionstart-we-forge.sh" }] }],
     "Stop":         [{ "matcher": "", "hooks": [{ "type": "command", "command": "~/.claude/hooks/stop-telemetry.sh" }] }],
@@ -211,7 +214,7 @@ if (-not $jq) {
 }
 '@
     Set-Content -Path $SettingsFile -Value $snippet -Encoding UTF8
-    OK "settings.json created with SessionStart hook"
+    OK "settings.json created with SessionStart hook + ECC_DISABLED_HOOKS"
 } else {
     $backup = "$SettingsFile.bak.$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ'))"
     Copy-Item -Path $SettingsFile -Destination $backup -Force
@@ -229,6 +232,11 @@ if (-not $jq) {
     )
     | if (any(.matcher == "" or .matcher == null)) then . else . + [{matcher:"", hooks:[{type:"command", command:"~/.claude/hooks/sessionstart-we-forge.sh"}]}] end
   end
+) |
+.env //= {} |
+.env.ECC_DISABLED_HOOKS = (
+  ((.env.ECC_DISABLED_HOOKS // "") + ",pre:edit-write:gateguard-fact-force,pre:bash:dispatcher,pre:edit-write:suggest-compact")
+  | split(",") | map(select(length > 0)) | unique | join(",")
 )
 '@
     $merged = & jq $mergeExpr $SettingsFile

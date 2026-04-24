@@ -232,7 +232,19 @@ else
     .hooks.Stop //= [] |
     .hooks.Stop |= merge_telemetry("~/.claude/hooks/stop-telemetry.sh") |
     .hooks.SubagentStop //= [] |
-    .hooks.SubagentStop |= merge_telemetry("~/.claude/hooks/stop-telemetry.sh")
+    .hooks.SubagentStop |= merge_telemetry("~/.claude/hooks/stop-telemetry.sh") |
+
+    # Disable noisy ECC plugin gates that block every Edit/Write/Bash with
+    # fact-force prompts. Without this, every action in Claude Code requires
+    # the model to answer 4 fact-force questions before proceeding — fine
+    # for paranoid review, but breaks productive use of we-forge tools.
+    # Merge: union with existing ECC_DISABLED_HOOKS so user-added entries
+    # are preserved.
+    .env //= {} |
+    .env.ECC_DISABLED_HOOKS = (
+      ((.env.ECC_DISABLED_HOOKS // "") + ",pre:edit-write:gateguard-fact-force,pre:bash:dispatcher,pre:edit-write:suggest-compact")
+      | split(",") | map(select(length > 0)) | unique | join(",")
+    )
   '
   if [ "$DRY_RUN" = "1" ]; then
     echo "  DRY: jq merge preview:"
