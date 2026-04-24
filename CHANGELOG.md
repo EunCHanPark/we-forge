@@ -6,6 +6,55 @@ All notable changes to we-forge are documented in this file. Format follows
 
 ## [Unreleased]
 
+## [0.4.3] — 2026-04-24
+
+Telegram bot reliability fix + `/status` shows active Claude Code sessions.
+
+### Fixes
+
+- **IPv4-only Telegram polling.** Some networks (Korean ISPs in particular)
+  report IPv6 routes that immediately fail with `[Errno 65] No route to host`,
+  causing `urllib.request.urlopen` to drop the call before falling back to
+  IPv4. We now monkey-patch `socket.getaddrinfo` to skip IPv6 results
+  for outbound HTTP calls. Resolves Telegram bot non-response observed
+  on networks with broken IPv6 connectivity.
+- **Send retries (3× with backoff).** `TelegramNotifier.send()` now retries
+  up to 3 times with 1.5s/3s backoff on transient timeouts.
+
+### Enhancements
+
+- **`/status` shows active Claude Code sessions** (Python + Rust).
+  Lists transcripts modified in the last 60 minutes with:
+  - 8-char session UUID
+  - decoded project path (filesystem-existence-aware to handle dashes
+    in directory names like `we-forge`, `edu-video-forge`)
+  - last activity time + age in minutes
+  - active marker (⚡ <5min · 🕐 <30min · 💤 older)
+- **`/status` also shows interval + next aligned tick** (was: only mode + telegram)
+
+### Files changed
+
+| Path | Change |
+|------|--------|
+| `scripts/we-forgectl` (Python) | `_force_ipv4_once()`, send retries, expanded `_cmd_status` with sessions |
+| `rust/src/daemon.rs` | `decode_project_path()` + `format_active_sessions()` + expanded `cmd_status` |
+| `rust/Cargo.toml` | version 0.4.2 → 0.4.3 |
+| `CHANGELOG.md` | this entry |
+
+### Behavior change
+
+`/status` Telegram response sample:
+```
+we-forge status: running
+mode: daemon
+interval: 720 min  (next tick: 04/25 00:00)
+telegram: enabled
+
+active sessions (last 60min, 2 total):
+  ⚡ c572b4ec 16:11 (0m) /Users/yukibana/we-forge
+  💤 d8457ecf 15:31 (39m) /Users/yukibana/ehforge/edu-video-forge
+```
+
 ## [0.4.2] — 2026-04-24
 
 Cross-PC propagation of we-forge auto-discovery. Other PCs running `install.sh`

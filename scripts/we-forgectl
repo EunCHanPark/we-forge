@@ -496,15 +496,40 @@ def run_tick_once() -> int:
 # Telegram notifier (opt-in)
 # ----------------------------------------------------------------------------
 
+def _force_ipv4_once() -> None:
+    """Monkey-patch socket.getaddrinfo to skip IPv6 results.
+
+    Some networks (Korean ISPs in particular) report IPv6 routes that
+    immediately fail with 'No route to host' (errno 65), causing urllib
+    to waste time before falling back to IPv4. Skipping IPv6 entirely
+    for outbound HTTP makes Telegram polling reliable.
+    Idempotent: only patches once per process.
+    """
+    import socket as _socket
+    if getattr(_socket, '_we_forge_ipv4_only', False):
+        return
+    _orig_gai = _socket.getaddrinfo
+    def _ipv4_only_gai(host, *args, **kwargs):
+        results = _orig_gai(host, *args, **kwargs)
+        ipv4 = [r for r in results if r[0] == _socket.AF_INET]
+        return ipv4 if ipv4 else results
+    _socket.getaddrinfo = _ipv4_only_gai
+    _socket._we_forge_ipv4_only = True
+
+
 class TelegramNotifier:
     """Minimal Telegram Bot API client using stdlib urllib.
 
     Activates only when both token and chat_id are configured.
     Sends notification messages on key events; optionally polls for incoming
     /commands in daemon mode.
+
+    Resilience: forces IPv4 (avoids dead IPv6 routes) and retries with
+    short timeouts (Korean ISPs sometimes throttle Telegram).
     """
 
     def __init__(self, token: str, chat_id: str) -> None:
+        _force_ipv4_once()
         self.token   = token
         self.chat_id = chat_id
         self.api     = f"https://api.telegram.org/bot{token}"
@@ -513,8 +538,11 @@ class TelegramNotifier:
     def send(self, text: str, html: bool = False) -> bool:
         """Send a message. Default: plain text (always works, never 400s).
         html=True only for senders that pre-formatted with <b>/<code>/<pre>
-        and escaped user content via html.escape()."""
-        import urllib.parse, urllib.request
+        and escaped user content via html.escape().
+
+        Retries up to 3 times with short timeouts to handle the intermittent
+        Telegram API throttling common on some networks (esp. Korean ISPs)."""
+        import urllib.parse, urllib.request, time as _time
         params = {
             "chat_id": self.chat_id,
             "text":    text[:4000],
@@ -522,22 +550,27 @@ class TelegramNotifier:
         if html:
             params["parse_mode"] = "HTML"
         data = urllib.parse.urlencode(params).encode()
-        try:
-            req = urllib.request.Request(f"{self.api}/sendMessage", data=data)
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                return resp.status == 200
-        except Exception as e:
-            warn(f"telegram send failed: {e}")
-            # Fallback: retry without parse_mode if HTML parse failed
-            if html:
-                try:
-                    plain = urllib.parse.urlencode({"chat_id": self.chat_id, "text": text[:4000]}).encode()
-                    req2  = urllib.request.Request(f"{self.api}/sendMessage", data=plain)
-                    with urllib.request.urlopen(req2, timeout=10) as resp:
-                        return resp.status == 200
-                except Exception as e2:
-                    warn(f"telegram plain-text retry also failed: {e2}")
-            return False
+        last_err = None
+        for attempt in range(3):
+            try:
+                req = urllib.request.Request(f"{self.api}/sendMessage", data=data)
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    return resp.status == 200
+            except Exception as e:
+                last_err = e
+                if attempt < 2:
+                    _time.sleep(1.5 * (attempt + 1))  # 1.5s, 3s backoff
+        warn(f"telegram send failed after 3 attempts: {last_err}")
+        # Fallback: retry without parse_mode if HTML parse failed (single try)
+        if html:
+            try:
+                plain = urllib.parse.urlencode({"chat_id": self.chat_id, "text": text[:4000]}).encode()
+                req2  = urllib.request.Request(f"{self.api}/sendMessage", data=plain)
+                with urllib.request.urlopen(req2, timeout=8) as resp:
+                    return resp.status == 200
+            except Exception as e2:
+                warn(f"telegram plain-text retry also failed: {e2}")
+        return False
 
     def poll(self, timeout: int = 25) -> list[dict]:
         """Long-poll for /command updates. Returns list of update dicts."""
@@ -672,12 +705,81 @@ class TelegramNotifier:
         return "last tick log:\n" + "\n".join(lines)
 
     def _cmd_status(self) -> str:
+        import datetime as _dt
         m = manager()
         s = m.status()
         cfg = load_config()
-        return (f"we-forge status: {s}\n"
-                f"mode: {cfg.get('mode', 'scheduled')}\n"
-                f"telegram: {'enabled' if cfg.get('telegram_enabled') else 'disabled'}")
+        sec = get_daemon_interval_seconds()
+        next_ts = next_aligned_tick_time(sec, time.time())
+        next_local = _dt.datetime.fromtimestamp(next_ts).strftime("%m/%d %H:%M")
+
+        head = (
+            f"we-forge status: {s}\n"
+            f"mode: {cfg.get('mode', 'scheduled')}\n"
+            f"interval: {sec // 60} min  (next tick: {next_local})\n"
+            f"telegram: {'enabled' if cfg.get('telegram_enabled') else 'disabled'}\n"
+        )
+
+        # Active Claude Code sessions (transcript mtime in last 60min)
+        sessions_block = self._format_active_sessions(window_min=60, max_show=10)
+        return head + "\n" + sessions_block
+
+    @staticmethod
+    def _decode_project_path(encoded: str) -> str:
+        """Recover the original filesystem path from Claude Code's encoded
+        project directory name. The encoding replaces '/' with '-', which is
+        ambiguous when the path itself contains dashes. We try filesystem
+        existence to disambiguate."""
+        import os as _os
+        parts = encoded.lstrip("-").split("-")
+        n = len(parts)
+        # Try combinations: prefer ones where dashes inside path segments are
+        # preserved (i.e., more "-" separators kept). Iterate from "all dashes"
+        # to "all slashes" so we find the most-existing path first.
+        for popcount in range(n - 1, -1, -1):
+            for mask in range(2 ** (n - 1)):
+                if bin(mask).count("1") != popcount:
+                    continue
+                seps = ["-" if (mask >> i) & 1 else "/" for i in range(n - 1)]
+                path = "/" + parts[0] + "".join(s + p for s, p in zip(seps, parts[1:]))
+                if _os.path.exists(path):
+                    return path
+        return "/" + "/".join(parts)
+
+    def _format_active_sessions(self, window_min: int = 60, max_show: int = 10) -> str:
+        """List Claude Code sessions with transcript activity in the window."""
+        import datetime as _dt
+        projects = CLAUDE_HOME / "projects"
+        if not projects.exists():
+            return "active sessions: (no projects/ directory yet)"
+        now = time.time()
+        cutoff = now - window_min * 60
+        rows = []
+        for proj in projects.iterdir():
+            if not proj.is_dir():
+                continue
+            decoded = self._decode_project_path(proj.name)
+            for tx in proj.glob("*.jsonl"):
+                try:
+                    mtime = tx.stat().st_mtime
+                except OSError:
+                    continue
+                if mtime < cutoff:
+                    continue
+                rows.append((mtime, tx.stem, decoded))
+        rows.sort(reverse=True)
+        if not rows:
+            return f"active sessions (last {window_min}min): (none — all idle)"
+        lines = [f"active sessions (last {window_min}min, {len(rows)} total):"]
+        for mtime, sid, path in rows[:max_show]:
+            age_min = int((now - mtime) / 60)
+            mark = "⚡" if age_min < 5 else "🕐" if age_min < 30 else "💤"
+            ts = _dt.datetime.fromtimestamp(mtime).strftime("%H:%M")
+            short_path = path if len(path) <= 45 else "…" + path[-44:]
+            lines.append(f"  {mark} {sid[:8]} {ts} ({age_min}m) {short_path}")
+        if len(rows) > max_show:
+            lines.append(f"  … ({len(rows) - max_show} more)")
+        return "\n".join(lines)
 
     def _cmd_interval(self) -> str:
         import datetime as _dt

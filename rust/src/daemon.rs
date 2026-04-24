@@ -318,12 +318,17 @@ pub mod telegram {
         fn cmd_status(&self) -> String {
             let s = crate::service::manager().status();
             let cfg = config::with_env_overrides(config::load());
-            format!(
-                "we-forge status: {}\nmode: {}\ntelegram: {}",
+            let sec = config::interval_seconds(&cfg);
+            let next = config::next_aligned_tick_time(sec, chrono::Local::now());
+            let head = format!(
+                "we-forge status: {}\nmode: {}\ninterval: {} min  (next tick: {})\ntelegram: {}\n",
                 s,
-                if cfg.mode.is_empty() { "scheduled".into() } else { cfg.mode },
+                if cfg.mode.is_empty() { "scheduled".into() } else { cfg.mode.clone() },
+                sec / 60,
+                next.format("%m/%d %H:%M"),
                 if cfg.telegram_enabled { "enabled" } else { "disabled" },
-            )
+            );
+            format!("{}\n{}", head, format_active_sessions(60, 10))
         }
 
         fn cmd_skill_report(&self) -> String {
@@ -361,6 +366,112 @@ pub mod telegram {
          ▸ /help\n  이 도움말\n\n\
          ──────────────────────────────\n\
          we-forge 는 무엇인가\n  · Claude Code 위에서 24/7 패턴 학습 데몬\n  · 사용자 작업을 관찰하고 ECC 마켓플레이스 스킬과 매칭\n  · 매칭 시 추천, 미매칭 시 신규 합성".to_string()
+    }
+
+    /// Recover original filesystem path from Claude Code's encoded project
+    /// directory name. Tries combinations of '-'/'/'  separators and prefers
+    /// ones that exist on disk to disambiguate dashes in directory names.
+    fn decode_project_path(encoded: &str) -> String {
+        let trimmed = encoded.trim_start_matches('-');
+        let parts: Vec<&str> = trimmed.split('-').collect();
+        let n = parts.len();
+        if n <= 1 {
+            return format!("/{}", trimmed);
+        }
+        // Iterate from "most dashes preserved" to "most slashes" so we find
+        // the deepest-existing path first.
+        for popcount in (0..=(n - 1)).rev() {
+            let combos = 1u32 << (n - 1);
+            for mask in 0..combos {
+                if (mask as u32).count_ones() as usize != popcount {
+                    continue;
+                }
+                let mut path = String::from("/");
+                path.push_str(parts[0]);
+                for i in 0..(n - 1) {
+                    let sep = if (mask >> i) & 1 == 1 { '-' } else { '/' };
+                    path.push(sep);
+                    path.push_str(parts[i + 1]);
+                }
+                if std::path::Path::new(&path).exists() {
+                    return path;
+                }
+            }
+        }
+        format!("/{}", parts.join("/"))
+    }
+
+    /// List Claude Code sessions with transcript activity in the window.
+    fn format_active_sessions(window_min: u64, max_show: usize) -> String {
+        let projects = paths::claude_home().join("projects");
+        if !projects.exists() {
+            return "active sessions: (no projects/ directory yet)".to_string();
+        }
+        let now = std::time::SystemTime::now();
+        let cutoff = now
+            .checked_sub(std::time::Duration::from_secs(window_min * 60))
+            .unwrap_or(std::time::UNIX_EPOCH);
+
+        let mut rows: Vec<(std::time::SystemTime, String, String)> = Vec::new();
+        let entries = match std::fs::read_dir(&projects) {
+            Ok(e) => e,
+            Err(_) => return "active sessions: (cannot read projects/)".to_string(),
+        };
+        for entry in entries.flatten() {
+            let proj_path = entry.path();
+            if !proj_path.is_dir() {
+                continue;
+            }
+            let encoded_name = match entry.file_name().to_str() {
+                Some(s) => s.to_string(),
+                None => continue,
+            };
+            let decoded = decode_project_path(&encoded_name);
+            let txs = match std::fs::read_dir(&proj_path) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            for tx in txs.flatten() {
+                let p = tx.path();
+                if p.extension().and_then(|s| s.to_str()) != Some("jsonl") {
+                    continue;
+                }
+                let mtime = match p.metadata().and_then(|m| m.modified()) {
+                    Ok(m) => m,
+                    Err(_) => continue,
+                };
+                if mtime < cutoff {
+                    continue;
+                }
+                let sid = p.file_stem().and_then(|s| s.to_str()).unwrap_or("?").to_string();
+                rows.push((mtime, sid, decoded.clone()));
+            }
+        }
+        rows.sort_by(|a, b| b.0.cmp(&a.0));
+
+        if rows.is_empty() {
+            return format!("active sessions (last {window_min}min): (none — all idle)");
+        }
+        let mut out = format!("active sessions (last {window_min}min, {} total):", rows.len());
+        for (mtime, sid, path) in rows.iter().take(max_show) {
+            let age_secs = now.duration_since(*mtime).map(|d| d.as_secs()).unwrap_or(0);
+            let age_min = age_secs / 60;
+            let mark = if age_min < 5 { "⚡" } else if age_min < 30 { "🕐" } else { "💤" };
+            let dt: chrono::DateTime<chrono::Local> = (*mtime).into();
+            let ts = dt.format("%H:%M");
+            let short_path: String = if path.chars().count() <= 45 {
+                path.clone()
+            } else {
+                let suffix: String = path.chars().rev().take(44).collect::<String>().chars().rev().collect();
+                format!("…{}", suffix)
+            };
+            let sid_short = sid.chars().take(8).collect::<String>();
+            out.push_str(&format!("\n  {mark} {sid_short} {ts} ({age_min}m) {short_path}"));
+        }
+        if rows.len() > max_show {
+            out.push_str(&format!("\n  … ({} more)", rows.len() - max_show));
+        }
+        out
     }
 
     fn cmd_interval() -> String {
