@@ -574,7 +574,15 @@ class TelegramNotifier:
 
     def poll(self, timeout: int = 25) -> list[dict]:
         """Long-poll for /command updates. Returns list of update dicts."""
-        import urllib.parse, urllib.request
+        import urllib.parse, urllib.request, urllib.error, time as _time
+        # Throttle if a previous call returned 409 Conflict (another daemon is
+        # polling the same bot token from another PC). Avoid hammering the API
+        # and leave room for the other instance to finish its long-poll.
+        if hasattr(self, '_conflict_backoff_until'):
+            now = _time.time()
+            if now < self._conflict_backoff_until:
+                _time.sleep(min(5, self._conflict_backoff_until - now))
+                return []
         params = {
             "offset":          self._last_update_id + 1,
             "timeout":         timeout,
@@ -588,7 +596,23 @@ class TelegramNotifier:
             for u in updates:
                 if u.get("update_id", 0) > self._last_update_id:
                     self._last_update_id = u["update_id"]
+            # Successful poll → clear any prior backoff
+            if hasattr(self, '_conflict_backoff_until'):
+                delattr(self, '_conflict_backoff_until')
             return updates
+        except urllib.error.HTTPError as e:
+            if e.code == 409:
+                # Another daemon is polling the same bot. Back off 60s.
+                self._conflict_backoff_until = _time.time() + 60
+                if not getattr(self, '_conflict_warned', False):
+                    warn("telegram poll: HTTP 409 Conflict — another we-forge daemon "
+                         "is polling the same bot token (check other PCs). "
+                         "Backing off 60s; this PC will not receive bot commands "
+                         "until the other daemon stops or its token changes.")
+                    self._conflict_warned = True
+                return []
+            warn(f"telegram poll failed: HTTP {e.code} {e.reason}")
+            return []
         except Exception as e:
             warn(f"telegram poll failed: {e}")
             return []
