@@ -227,6 +227,8 @@ else
           end
       end;
     .hooks //= {} |
+    .hooks.SessionStart //= [] |
+    .hooks.SessionStart |= merge_telemetry("~/.claude/hooks/sessionstart-we-forge.sh") |
     .hooks.Stop //= [] |
     .hooks.Stop |= merge_telemetry("~/.claude/hooks/stop-telemetry.sh") |
     .hooks.SubagentStop //= [] |
@@ -239,6 +241,65 @@ else
     TMP="$(mktemp)"
     jq "$MERGE_EXPR" "$SETTINGS" > "$TMP"
     mv "$TMP" "$SETTINGS"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Global CLAUDE.md install (idempotent via marker block)
+#
+# ~/.claude/CLAUDE.md is auto-loaded by Claude Code in EVERY session, regardless
+# of cwd. We install our we-forge global instructions as a marker-bounded block
+# so users with existing personal CLAUDE.md content don't lose it.
+#
+# - If user has no CLAUDE.md → copy template as-is
+# - If user has CLAUDE.md but no marker → append we-forge block
+# - If marker exists → replace block (idempotent; supports re-install upgrades)
+# ---------------------------------------------------------------------------
+GLOBAL_CLAUDE_MD="$CLAUDE_HOME/CLAUDE.md"
+TEMPLATE="$REPO_DIR/home/.claude/CLAUDE.md"
+MARKER_START="<!-- WE-FORGE-GLOBAL-START -->"
+MARKER_END="<!-- WE-FORGE-GLOBAL-END -->"
+
+if [ ! -f "$TEMPLATE" ]; then
+  _warn "global CLAUDE.md template not found at $TEMPLATE — skipping"
+elif [ ! -f "$GLOBAL_CLAUDE_MD" ]; then
+  _say "creating global $GLOBAL_CLAUDE_MD (with we-forge marker block)"
+  if [ "$DRY_RUN" = "1" ]; then
+    echo "  DRY: would write $GLOBAL_CLAUDE_MD with marker-bounded we-forge block"
+  else
+    {
+      printf '%s\n' "$MARKER_START"
+      cat "$TEMPLATE"
+      printf '%s\n' "$MARKER_END"
+    } > "$GLOBAL_CLAUDE_MD"
+  fi
+elif grep -qF "$MARKER_START" "$GLOBAL_CLAUDE_MD" 2>/dev/null; then
+  _say "updating we-forge marker block in $GLOBAL_CLAUDE_MD (preserving user content)"
+  if [ "$DRY_RUN" = "1" ]; then
+    echo "  DRY: would replace block between $MARKER_START and $MARKER_END"
+  else
+    BACKUP="$GLOBAL_CLAUDE_MD.bak.$(date -u +%Y%m%dT%H%M%SZ)"
+    cp -f "$GLOBAL_CLAUDE_MD" "$BACKUP"
+    awk -v start="$MARKER_START" -v end="$MARKER_END" -v tpl="$TEMPLATE" '
+      $0 == start { in_block=1; print start; while ((getline line < tpl) > 0) print line; print end; next }
+      $0 == end   { in_block=0; next }
+      !in_block   { print }
+    ' "$GLOBAL_CLAUDE_MD" > "$GLOBAL_CLAUDE_MD.tmp"
+    mv "$GLOBAL_CLAUDE_MD.tmp" "$GLOBAL_CLAUDE_MD"
+  fi
+else
+  _say "appending we-forge marker block to existing $GLOBAL_CLAUDE_MD (preserving user content)"
+  if [ "$DRY_RUN" = "1" ]; then
+    echo "  DRY: would append marker-bounded we-forge block to bottom of file"
+  else
+    BACKUP="$GLOBAL_CLAUDE_MD.bak.$(date -u +%Y%m%dT%H%M%SZ)"
+    cp -f "$GLOBAL_CLAUDE_MD" "$BACKUP"
+    {
+      printf '\n\n'
+      printf '%s\n' "$MARKER_START"
+      cat "$TEMPLATE"
+      printf '%s\n' "$MARKER_END"
+    } >> "$GLOBAL_CLAUDE_MD"
   fi
 fi
 

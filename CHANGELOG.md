@@ -6,6 +6,55 @@ All notable changes to we-forge are documented in this file. Format follows
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-04-24
+
+Cross-PC propagation of we-forge auto-discovery. Other PCs running `install.sh`
+or `install.ps1` now get the same SessionStart hook + global CLAUDE.md, so
+every new Claude Code session everywhere is aware of we-forge automatically.
+
+### New auto-load mechanisms (works on any PC after install)
+
+- **SessionStart hook** (`hooks/sessionstart-we-forge.sh`) — installed to
+  `~/.claude/hooks/`. Claude Code runs it at every new session start; stdout
+  becomes context. Output: daemon status, current cadence + next tick,
+  ECC top 5, last-24h ledger summary.
+- **Global CLAUDE.md** (`home/.claude/CLAUDE.md` template) — merged into
+  `~/.claude/CLAUDE.md` (auto-loaded in every session, regardless of cwd).
+  Contains we-forge CLI/agent reference + when-to-invoke triggers + ECC
+  alignment disclosure mandate. Marker-bounded (`<!-- WE-FORGE-GLOBAL-START -->`)
+  so existing user content is preserved.
+
+### Distribution updates
+
+- **`install.sh`**: copies `sessionstart-we-forge.sh`, merges `SessionStart`
+  hook into `settings.json` via jq, installs `home/.claude/CLAUDE.md` as
+  marker-bounded block (idempotent — supports re-install upgrades, preserves
+  user's personal CLAUDE.md content).
+- **`install.ps1`**: extends Windows native installer to fetch hook + CLAUDE.md
+  from GitHub raw URLs, merges via jq if available (or prints manual merge
+  instructions if jq missing).
+- **`learning/settings.snippet.json`**: adds `SessionStart` entry alongside
+  existing `Stop` and `SubagentStop`.
+
+### Files changed
+
+| Path | Change |
+|------|--------|
+| `home/.claude/CLAUDE.md` | NEW — global Claude Code instructions template |
+| `hooks/sessionstart-we-forge.sh` | NEW — live status injection script |
+| `install.sh` | +copy hook +marker-block CLAUDE.md install +jq SessionStart merge |
+| `install.ps1` | +Section 6 (Claude Code integration via raw URL fetch) |
+| `learning/settings.snippet.json` | +SessionStart entry |
+| `rust/Cargo.toml` | version 0.4.1 → 0.4.2 |
+| `CHANGELOG.md` | this entry |
+
+### Behavior change for users
+
+After upgrading via `./install.sh` or `iwr ... install.ps1 | iex`:
+- Every new Claude Code session prints we-forge live status into model context
+- Model knows about `we-forgectl`, `/skill-report`, ECC trace, when to invoke
+- ECC alignment disclosure mandate becomes the default (no per-session reminder)
+
 ## [0.4.1] — 2026-04-24
 
 Security patch + Windows installer DX fix.

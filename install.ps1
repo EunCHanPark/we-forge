@@ -136,7 +136,112 @@ try {
 }
 
 # ---------------------------------------------------------------------------
-# 6. Service install (Windows Task Scheduler via Rust manager)
+# 6. Install Claude Code integration files (hooks + global CLAUDE.md)
+#
+# Fetches we-forge integration files from GitHub raw URLs (no clone needed):
+#   - SessionStart hook → ~/.claude/hooks/sessionstart-we-forge.sh
+#   - Global CLAUDE.md template → ~/.claude/CLAUDE.md (marker-bounded merge)
+#
+# These make every new Claude Code session aware of we-forge and inject live
+# status into the model's context.
+# ---------------------------------------------------------------------------
+
+$ClaudeHome = Join-Path $env:USERPROFILE ".claude"
+$HooksDir   = Join-Path $ClaudeHome "hooks"
+$RawBase    = "https://raw.githubusercontent.com/EunCHanPark/we-forge/main"
+
+Step "installing Claude Code integration (~/.claude/)"
+New-Item -ItemType Directory -Force -Path $HooksDir | Out-Null
+
+# 6a. SessionStart hook
+try {
+    $hookDest = Join-Path $HooksDir "sessionstart-we-forge.sh"
+    Invoke-WebRequest -Uri "$RawBase/hooks/sessionstart-we-forge.sh" -OutFile $hookDest -UseBasicParsing
+    OK "hook installed -> $hookDest"
+} catch {
+    Warn "hook install skipped: $($_.Exception.Message)"
+}
+
+# 6b. Global CLAUDE.md (marker-bounded merge)
+try {
+    $tmpTemplate = Join-Path $env:TEMP "we-forge-global-claude.md"
+    Invoke-WebRequest -Uri "$RawBase/home/.claude/CLAUDE.md" -OutFile $tmpTemplate -UseBasicParsing
+    $globalClaude = Join-Path $ClaudeHome "CLAUDE.md"
+    $markerStart  = "<!-- WE-FORGE-GLOBAL-START -->"
+    $markerEnd    = "<!-- WE-FORGE-GLOBAL-END -->"
+    $template     = Get-Content $tmpTemplate -Raw
+
+    if (-not (Test-Path $globalClaude)) {
+        Set-Content -Path $globalClaude -Value "$markerStart`n$template`n$markerEnd" -Encoding UTF8
+        OK "global CLAUDE.md created -> $globalClaude"
+    } elseif ((Get-Content $globalClaude -Raw) -like "*$markerStart*") {
+        $existing = Get-Content $globalClaude -Raw
+        $pattern  = "(?ms)$([regex]::Escape($markerStart)).*?$([regex]::Escape($markerEnd))"
+        $newContent = [regex]::Replace($existing, $pattern, "$markerStart`n$template`n$markerEnd")
+        $backup = "$globalClaude.bak.$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ'))"
+        Copy-Item -Path $globalClaude -Destination $backup -Force
+        Set-Content -Path $globalClaude -Value $newContent -Encoding UTF8
+        OK "we-forge marker block updated in $globalClaude (backup: $backup)"
+    } else {
+        $backup = "$globalClaude.bak.$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ'))"
+        Copy-Item -Path $globalClaude -Destination $backup -Force
+        Add-Content -Path $globalClaude -Value "`n`n$markerStart`n$template`n$markerEnd" -Encoding UTF8
+        OK "we-forge marker block appended to $globalClaude (backup: $backup)"
+    }
+    Remove-Item $tmpTemplate -Force -ErrorAction SilentlyContinue
+} catch {
+    Warn "global CLAUDE.md install skipped: $($_.Exception.Message)"
+}
+
+# 6c. Settings.json hook merge (jq required)
+$SettingsFile = Join-Path $ClaudeHome "settings.json"
+$jq = Get-Command jq -ErrorAction SilentlyContinue
+if (-not $jq) {
+    Warn "jq not found on PATH — skipping settings.json hook merge"
+    Warn "install jq (https://stedolan.github.io/jq/) and re-run, OR add manually to ~/.claude/settings.json hooks.SessionStart:"
+    Warn '  { "matcher": "", "hooks": [{ "type": "command", "command": "~/.claude/hooks/sessionstart-we-forge.sh" }] }'
+} elseif (-not (Test-Path $SettingsFile)) {
+    $snippet = @'
+{
+  "hooks": {
+    "SessionStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": "~/.claude/hooks/sessionstart-we-forge.sh" }] }],
+    "Stop":         [{ "matcher": "", "hooks": [{ "type": "command", "command": "~/.claude/hooks/stop-telemetry.sh" }] }],
+    "SubagentStop": [{ "matcher": "", "hooks": [{ "type": "command", "command": "~/.claude/hooks/stop-telemetry.sh" }] }]
+  }
+}
+'@
+    Set-Content -Path $SettingsFile -Value $snippet -Encoding UTF8
+    OK "settings.json created with SessionStart hook"
+} else {
+    $backup = "$SettingsFile.bak.$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ'))"
+    Copy-Item -Path $SettingsFile -Destination $backup -Force
+    $mergeExpr = @'
+.hooks //= {} |
+.hooks.SessionStart //= [] |
+.hooks.SessionStart |= (
+  if (length == 0) then
+    [{matcher:"", hooks:[{type:"command", command:"~/.claude/hooks/sessionstart-we-forge.sh"}]}]
+  else
+    map(
+      if (.matcher == "" or .matcher == null) then
+        .hooks = ((.hooks // []) | if (map(.command) | index("~/.claude/hooks/sessionstart-we-forge.sh")) then . else . + [{type:"command", command:"~/.claude/hooks/sessionstart-we-forge.sh"}] end)
+      else . end
+    )
+    | if (any(.matcher == "" or .matcher == null)) then . else . + [{matcher:"", hooks:[{type:"command", command:"~/.claude/hooks/sessionstart-we-forge.sh"}]}] end
+  end
+)
+'@
+    $merged = & jq $mergeExpr $SettingsFile
+    if ($LASTEXITCODE -eq 0) {
+        Set-Content -Path $SettingsFile -Value $merged -Encoding UTF8
+        OK "SessionStart hook merged into settings.json (backup: $backup)"
+    } else {
+        Warn "jq merge failed — settings.json unchanged (backup: $backup)"
+    }
+}
+
+# ---------------------------------------------------------------------------
+# 7. Service install (Windows Task Scheduler via Rust manager)
 # ---------------------------------------------------------------------------
 
 if (-not $NoServiceInstall) {
