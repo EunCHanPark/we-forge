@@ -6,6 +6,38 @@ All notable changes to we-forge are documented in this file. Format follows
 
 ## [Unreleased]
 
+## [0.4.6] — 2026-04-25
+
+Unix install.sh now auto-registers `~/.local/bin` on PATH (matches the
+behavior install.ps1 already had on Windows).
+
+### Fix
+
+- **`install.sh` appends `export PATH="$HOME/.local/bin:$PATH"` to
+  `~/.zshrc`, `~/.bashrc`, `~/.bash_profile`** (whichever exist).
+  Idempotent via the `# we-forge CLI` marker — safe to re-run.
+- Previously install.sh only *warned* that `~/.local/bin` wasn't on PATH,
+  leaving users to fix it themselves. Result: fresh terminals hit
+  `zsh: command not found: we-forgectl` even though install succeeded.
+
+### Files changed
+
+| Path | Change |
+|------|--------|
+| `install.sh` | +PATH auto-registration block, idempotent marker |
+| `rust/Cargo.toml` | version 0.4.5 → 0.4.6 |
+| `CHANGELOG.md` | this entry |
+
+### Upgrade path
+
+Existing users on macOS/Linux with `zsh: command not found: we-forgectl` can
+either:
+- Re-run `./install.sh` (appends PATH to rc files), then open a new terminal
+- Or append once manually: `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc`
+
+Users who already have `~/.local/bin` on PATH: no action needed (marker
+prevents duplicate append).
+
 ## [0.4.5] — 2026-04-25
 
 Critical Windows install fixes. v0.4.4 and earlier installed on Windows

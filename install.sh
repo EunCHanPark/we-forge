@@ -315,6 +315,32 @@ else
   fi
 fi
 
+# ---------------------------------------------------------------------------
+# Ensure ~/.local/bin is on the user's PATH (for we-forgectl CLI discovery)
+#
+# install.ps1 does this on Windows. install.sh previously left it to the user,
+# leading to "command not found: we-forgectl" in fresh terminals. Append to
+# the shell rc files the user actually has, idempotent via a marker line.
+# ---------------------------------------------------------------------------
+PATH_MARKER='# we-forge CLI'
+PATH_LINE='export PATH="$HOME/.local/bin:$PATH"'
+for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
+  [ -f "$rc" ] || continue
+  if ! grep -qF "$PATH_MARKER" "$rc" 2>/dev/null; then
+    if [ "$DRY_RUN" = "1" ]; then
+      _say "DRY: would append PATH entry to $rc"
+    else
+      {
+        printf '\n%s\n' "$PATH_MARKER"
+        printf '%s\n' "$PATH_LINE"
+      } >> "$rc"
+      _say "PATH entry appended to $rc"
+    fi
+  fi
+done
+# Also ensure ~/.local/bin exists so PATH entry resolves
+mkdir -p "$HOME/.local/bin" 2>/dev/null || true
+
 _say "install complete."
 
 if ! find "$CLAUDE_HOME/projects" -maxdepth 3 -name '*.jsonl' 2>/dev/null | head -1 | grep -q .; then
