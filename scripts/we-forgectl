@@ -750,60 +750,10 @@ class TelegramNotifier:
 
     @staticmethod
     def _decode_project_path(encoded: str) -> str:
-        """Recover the original filesystem path from Claude Code's encoded
-        project directory name. The encoding replaces '/' with '-', which is
-        ambiguous when the path itself contains dashes. We try filesystem
-        existence to disambiguate."""
-        import os as _os
-        parts = encoded.lstrip("-").split("-")
-        n = len(parts)
-        # Try combinations: prefer ones where dashes inside path segments are
-        # preserved (i.e., more "-" separators kept). Iterate from "all dashes"
-        # to "all slashes" so we find the most-existing path first.
-        for popcount in range(n - 1, -1, -1):
-            for mask in range(2 ** (n - 1)):
-                if bin(mask).count("1") != popcount:
-                    continue
-                seps = ["-" if (mask >> i) & 1 else "/" for i in range(n - 1)]
-                path = "/" + parts[0] + "".join(s + p for s, p in zip(seps, parts[1:]))
-                if _os.path.exists(path):
-                    return path
-        return "/" + "/".join(parts)
+        return decode_project_path(encoded)
 
     def _format_active_sessions(self, window_min: int = 60, max_show: int = 10) -> str:
-        """List Claude Code sessions with transcript activity in the window."""
-        import datetime as _dt
-        projects = CLAUDE_HOME / "projects"
-        if not projects.exists():
-            return "active sessions: (no projects/ directory yet)"
-        now = time.time()
-        cutoff = now - window_min * 60
-        rows = []
-        for proj in projects.iterdir():
-            if not proj.is_dir():
-                continue
-            decoded = self._decode_project_path(proj.name)
-            for tx in proj.glob("*.jsonl"):
-                try:
-                    mtime = tx.stat().st_mtime
-                except OSError:
-                    continue
-                if mtime < cutoff:
-                    continue
-                rows.append((mtime, tx.stem, decoded))
-        rows.sort(reverse=True)
-        if not rows:
-            return f"active sessions (last {window_min}min): (none — all idle)"
-        lines = [f"active sessions (last {window_min}min, {len(rows)} total):"]
-        for mtime, sid, path in rows[:max_show]:
-            age_min = int((now - mtime) / 60)
-            mark = "⚡" if age_min < 5 else "🕐" if age_min < 30 else "💤"
-            ts = _dt.datetime.fromtimestamp(mtime).strftime("%H:%M")
-            short_path = path if len(path) <= 45 else "…" + path[-44:]
-            lines.append(f"  {mark} {sid[:8]} {ts} ({age_min}m) {short_path}")
-        if len(rows) > max_show:
-            lines.append(f"  … ({len(rows) - max_show} more)")
-        return "\n".join(lines)
+        return format_active_sessions(window_min=window_min, max_show=max_show)
 
     def _cmd_interval(self) -> str:
         import datetime as _dt
@@ -1045,6 +995,102 @@ def tui() -> int:
 # ----------------------------------------------------------------------------
 
 # ----------------------------------------------------------------------------
+# Session detection — module-level helpers shared by CLI and Telegram bot
+# ----------------------------------------------------------------------------
+
+def decode_project_path(encoded: str) -> str:
+    """Decode Claude Code's encoded project dir name back to a filesystem path.
+
+    Claude Code encodes the project root by prepending '-' and replacing every
+    '/' and '.' with '-'.  Double dashes ('--') therefore represent '/.' (a
+    hidden directory component like '.claude').  We resolve greedily O(n)
+    using filesystem existence checks.
+    """
+    stripped = encoded.lstrip("-")
+
+    # Fast-path 1: direct slash substitution (paths with no dots or dashes)
+    simple = "/" + stripped.replace("-", "/")
+    if os.path.exists(simple):
+        return simple
+
+    # Fast-path 2: handle '--' as '/.' before single-dash replacement
+    with_dot = "/" + stripped.replace("--", "/.").replace("-", "/")
+    if os.path.exists(with_dot):
+        return with_dot
+
+    # Greedy walk: split on '-', treating empty segments (from '--') as '.'
+    segments: list[str] = []
+    i = 0
+    raw = stripped.split("-")
+    while i < len(raw):
+        if raw[i] == "" and i + 1 < len(raw):
+            # '--' → the next segment is a dot-prefixed name
+            segments.append("." + raw[i + 1])
+            i += 2
+        else:
+            if raw[i]:
+                segments.append(raw[i])
+            i += 1
+
+    if not segments:
+        return with_dot or simple
+
+    path = "/" + segments[0]
+    for seg in segments[1:]:
+        slash_try = path + "/" + seg
+        dash_try  = path + "-" + seg
+        if os.path.exists(slash_try):
+            path = slash_try
+        elif os.path.exists(dash_try):
+            path = dash_try
+        else:
+            path = slash_try
+    return path
+
+
+def format_active_sessions(window_min: int = 60, max_show: int = 10) -> str:
+    """List Claude Code sessions with transcript activity within *window_min* minutes."""
+    import datetime as _dt
+    projects = CLAUDE_HOME / "projects"
+    if not projects.exists():
+        return "active sessions: (no projects/ directory yet)"
+    now    = time.time()
+    cutoff = now - window_min * 60
+    rows   = []
+    for proj in projects.iterdir():
+        if not proj.is_dir():
+            continue
+        decoded = decode_project_path(proj.name)
+        for tx in proj.glob("*.jsonl"):
+            try:
+                mtime = tx.stat().st_mtime
+            except OSError:
+                continue
+            if mtime < cutoff:
+                continue
+            rows.append((mtime, tx.stem, decoded))
+    rows.sort(reverse=True)
+    if not rows:
+        return f"active sessions (last {window_min}min): (none — all idle)"
+    lines = [f"active sessions (last {window_min}min, {len(rows)} total):"]
+    for mtime, sid, path in rows[:max_show]:
+        age_min  = int((now - mtime) / 60)
+        mark     = "⚡" if age_min < 5 else "🕐" if age_min < 30 else "💤"
+        ts_str   = _dt.datetime.fromtimestamp(mtime).strftime("%H:%M")
+        short    = path if len(path) <= 45 else "…" + path[-44:]
+        lines.append(f"  {mark} {sid[:8]} {ts_str} ({age_min}m) {short}")
+    if len(rows) > max_show:
+        lines.append(f"  … ({len(rows) - max_show} more)")
+    return "\n".join(lines)
+
+
+def cmd_sessions(window_min: int = 60) -> int:
+    """Print active Claude Code sessions detected via transcript file activity."""
+    print(format_active_sessions(window_min=window_min, max_show=20))
+    return 0
+
+
+# ----------------------------------------------------------------------------
 # ECC trace — record + report which ECC marketplace skills are used
 # ----------------------------------------------------------------------------
 
@@ -1201,6 +1247,8 @@ def cmd_status() -> int:
     print(f"  telegram: {'enabled' if cfg.get('telegram_enabled') else 'disabled'}")
     print(f"  os:       {detect_os()}{' (WSL)' if is_wsl() else ''}")
     print(f"  config:   {CONFIG_FILE}")
+    print()
+    print(format_active_sessions(window_min=60, max_show=10))
     return 0 if s == "running" else 1
 
 def cmd_set_interval(minutes: int) -> int:
@@ -1383,6 +1431,11 @@ def main() -> int:
     p_ecc_trace.add_argument("--group", action="store_true",
                              help="display totals per skill instead of timeline")
 
+    p_sessions = sp.add_parser("sessions",
+        help="list active Claude Code sessions (transcript activity in last N minutes)")
+    p_sessions.add_argument("--window", type=int, default=60,
+                            help="look-back window in minutes (default: 60)")
+
     args = p.parse_args()
     if not args.cmd:
         p.print_help()
@@ -1405,6 +1458,7 @@ def main() -> int:
         if args.cmd == "logs":         return cmd_logs(args.n)
         if args.cmd == "ecc-log":      return cmd_ecc_log(args.skill, args.reason, args.invoker)
         if args.cmd == "ecc-trace":    return cmd_ecc_trace(args.last, args.group)
+        if args.cmd == "sessions":     return cmd_sessions(args.window)
     except KeyboardInterrupt:
         print()
         return 130
