@@ -72,11 +72,36 @@ we-forgectl install
 ### Windows (PowerShell)
 
 ```powershell
-$URL = "https://github.com/EunCHanPark/we-forge/releases/latest/download/we-forgectl-x86_64-pc-windows-msvc.zip"
-iwr $URL -OutFile we-forgectl.zip
-Expand-Archive we-forgectl.zip -DestinationPath $env:USERPROFILE\.local\bin
-we-forgectl install
+iwr -useb https://raw.githubusercontent.com/EunCHanPark/we-forge/main/install.ps1 | iex
 ```
+
+This single line:
+
+1. Downloads the latest `we-forgectl.exe` to `$env:USERPROFILE\.local\bin`
+2. Adds that directory to your **user PATH** (persists across sessions)
+3. Runs `we-forgectl install` — registers Windows Task Scheduler service
+4. Future PowerShell windows recognize `we-forgectl` immediately
+
+Optional flags (after `iex`):
+
+```powershell
+# Pin to a specific version
+iwr -useb https://raw.githubusercontent.com/EunCHanPark/we-forge/main/install.ps1 -OutFile install.ps1
+.\install.ps1 -Version v0.4.0
+
+# Custom install location
+.\install.ps1 -InstallDir "C:\tools\we-forge"
+
+# Skip Task Scheduler registration
+.\install.ps1 -NoServiceInstall
+
+# Enable Telegram bot during install
+.\install.ps1 -EnableTelegram
+```
+
+> **WSL2 fallback** (legacy): if you prefer the WSL-based install, see
+> [WSL-SETUP.md](WSL-SETUP.md). The previous `install.ps1` is preserved
+> as `install.ps1.wsl-fallback.bak` after running this installer.
 
 ### From a clone — Python (no Rust toolchain)
 
