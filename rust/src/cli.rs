@@ -255,9 +255,26 @@ pub mod doctor {
     use std::path::Path;
 
     fn which(tool: &str) -> Option<std::path::PathBuf> {
+        // On Windows, binaries live as tool.exe / tool.cmd / tool.bat on PATH.
+        // Searching for the bare name misses them and produces false FAIL
+        // reports in `doctor` even when the tool is installed.
+        let exts: &[&str] = if cfg!(windows) {
+            &["", ".exe", ".cmd", ".bat"]
+        } else {
+            &[""]
+        };
         std::env::var("PATH").ok().and_then(|paths| {
-            paths.split(if cfg!(windows) { ';' } else { ':' })
-                .map(|d| Path::new(d).join(tool))
+            paths
+                .split(if cfg!(windows) { ';' } else { ':' })
+                .flat_map(|d| {
+                    exts.iter().map(move |e| {
+                        if e.is_empty() {
+                            Path::new(d).join(tool)
+                        } else {
+                            Path::new(d).join(format!("{tool}{e}"))
+                        }
+                    })
+                })
                 .find(|p| p.is_file())
         })
     }

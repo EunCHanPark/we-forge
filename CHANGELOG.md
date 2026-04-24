@@ -6,6 +6,65 @@ All notable changes to we-forge are documented in this file. Format follows
 
 ## [Unreleased]
 
+## [0.4.5] — 2026-04-25
+
+Critical Windows install fixes. v0.4.4 and earlier installed on Windows
+produced a half-installed state: service registered but no learning runtime.
+
+### Fixes
+
+- **`install.ps1` now installs the full runtime** (was binary-only by
+  oversight). Previous Windows installs registered the Task Scheduler
+  service but tick.sh / normalize.py / redact.sh / agent definitions
+  never reached `~/.claude/`, so the tick pipeline couldn't run.
+
+  Newly fetched from GitHub raw URLs:
+  - `~/.claude/hooks/stop-telemetry.sh`
+  - `~/.claude/learning/{tick.sh,normalize.py,redact.sh,settings.snippet.json}`
+  - `~/.claude/learning/data/{events,patterns,promotion_queue,ledger}.jsonl` (empty init)
+  - `~/.claude/learning/data/state.json` (init `{}`)
+  - `~/.claude/agents/{we-forge,monitor-sentinel,pattern-detector,quality-auditor,skill-synthesizer}.md`
+  - `~/.claude/commands/{watch-and-learn,skill-report,ask-codex,ask-gemini}.md`
+
+- **`install.ps1` PowerShell-only settings merge fallback.** jq is no
+  longer required on Windows. If jq isn't found, a pure PowerShell
+  `Merge-WeForgeSettingsPS` function (same semantics as the jq expression)
+  handles the merge. The previous "jq not found → skip" path left
+  Stop/SubagentStop hooks unregistered, meaning telemetry never landed
+  in `events.jsonl`.
+
+- **Rust `doctor::which()` Windows extension support.** On Windows, binaries
+  live as `tool.exe` / `tool.cmd` / `tool.bat` on PATH. The prior bare-name
+  lookup missed them and produced false FAIL reports even when
+  `python3.exe`, `bash.exe`, `jq.exe` were installed. Now tries
+  `{"", ".exe", ".cmd", ".bat"}` extensions on Windows.
+
+### Additionally in this release
+
+- TelegramNotifier: 409 Conflict detection with 60s backoff (when another
+  PC is polling the same bot token). Emits a clear warning so users
+  discover the conflict instead of seeing generic "timed out" errors.
+
+### Files changed
+
+| Path | Change |
+|------|--------|
+| `install.ps1` | +learning/agents/commands/hooks fetches, +PowerShell JSON merge fallback |
+| `rust/src/cli.rs` | `doctor::which()` tries Windows extensions |
+| `scripts/we-forgectl` | `poll()` detects HTTP 409, 60s backoff |
+| `rust/Cargo.toml` | version 0.4.4 → 0.4.5 |
+| `CHANGELOG.md` | this entry |
+
+### Upgrade path for affected Windows installs
+
+Users who installed v0.4.4 and earlier on Windows and saw an "installed
+but not working" state should re-run:
+```powershell
+iwr -useb https://raw.githubusercontent.com/EunCHanPark/we-forge/main/install.ps1 | iex
+```
+
+This is idempotent and will fill in the missing runtime files.
+
 ## [0.4.4] — 2026-04-24
 
 Auto-disable noisy ECC gateguard hooks on install. Solves the DX problem

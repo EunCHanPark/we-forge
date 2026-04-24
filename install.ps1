@@ -153,13 +153,72 @@ $RawBase    = "https://raw.githubusercontent.com/EunCHanPark/we-forge/main"
 Step "installing Claude Code integration (~/.claude/)"
 New-Item -ItemType Directory -Force -Path $HooksDir | Out-Null
 
-# 6a. SessionStart hook
+# 6a. Hooks (SessionStart + Stop/SubagentStop telemetry)
 try {
-    $hookDest = Join-Path $HooksDir "sessionstart-we-forge.sh"
-    Invoke-WebRequest -Uri "$RawBase/hooks/sessionstart-we-forge.sh" -OutFile $hookDest -UseBasicParsing
-    OK "hook installed -> $hookDest"
+    foreach ($h in @("sessionstart-we-forge.sh", "stop-telemetry.sh")) {
+        $hookDest = Join-Path $HooksDir $h
+        Invoke-WebRequest -Uri "$RawBase/hooks/$h" -OutFile $hookDest -UseBasicParsing
+        OK "hook installed -> $hookDest"
+    }
 } catch {
     Warn "hook install skipped: $($_.Exception.Message)"
+}
+
+# 6a-2. Learning runtime (tick.sh + normalize.py + redact.sh + data/ skeleton)
+#
+# Without this block the daemon registers but the tick pipeline can't run:
+# tick.sh doesn't exist to be called, normalize.py can't canonicalize events,
+# redact.sh can't filter secrets. The install.sh (Mac/Linux) copies these
+# from the cloned repo; the native Windows installer fetches them via raw URLs.
+try {
+    $LearnDir     = Join-Path $ClaudeHome "learning"
+    $LearnDataDir = Join-Path $LearnDir "data"
+    New-Item -ItemType Directory -Force -Path $LearnDataDir | Out-Null
+    foreach ($f in @("tick.sh","normalize.py","redact.sh","settings.snippet.json")) {
+        $dest = Join-Path $LearnDir $f
+        Invoke-WebRequest -Uri "$RawBase/learning/$f" -OutFile $dest -UseBasicParsing
+    }
+    foreach ($f in @("events.jsonl","patterns.jsonl","promotion_queue.jsonl","ledger.jsonl","rejected.txt")) {
+        $p = Join-Path $LearnDataDir $f
+        if (-not (Test-Path $p)) { New-Item -ItemType File -Force -Path $p | Out-Null }
+    }
+    $stateFile = Join-Path $LearnDataDir "state.json"
+    if (-not (Test-Path $stateFile)) {
+        Set-Content -Path $stateFile -Value "{}" -Encoding UTF8
+    }
+    OK "learning runtime installed -> $LearnDir"
+} catch {
+    Warn "learning runtime install skipped: $($_.Exception.Message)"
+}
+
+# 6a-3. Agent definitions (5 sub-agents) — spawned by we-forge tick loop
+try {
+    $AgentsDir = Join-Path $ClaudeHome "agents"
+    New-Item -ItemType Directory -Force -Path $AgentsDir | Out-Null
+    foreach ($a in @("we-forge","monitor-sentinel","pattern-detector","quality-auditor","skill-synthesizer")) {
+        $dest = Join-Path $AgentsDir "$a.md"
+        Invoke-WebRequest -Uri "$RawBase/agents/$a.md" -OutFile $dest -UseBasicParsing
+    }
+    OK "agent definitions installed -> $AgentsDir"
+} catch {
+    Warn "agents install skipped: $($_.Exception.Message)"
+}
+
+# 6a-4. Slash commands — /skill-report, /watch-and-learn, /dashboard, ...
+try {
+    $CommandsDir = Join-Path $ClaudeHome "commands"
+    New-Item -ItemType Directory -Force -Path $CommandsDir | Out-Null
+    foreach ($c in @("watch-and-learn","skill-report","ask-codex","ask-gemini")) {
+        try {
+            $dest = Join-Path $CommandsDir "$c.md"
+            Invoke-WebRequest -Uri "$RawBase/commands/$c.md" -OutFile $dest -UseBasicParsing
+        } catch {
+            # Some commands may not exist in all versions; tolerate 404
+        }
+    }
+    OK "slash commands installed -> $CommandsDir"
+} catch {
+    Warn "commands install skipped: $($_.Exception.Message)"
 }
 
 # 6b. Global CLAUDE.md (marker-bounded merge)
@@ -193,14 +252,57 @@ try {
     Warn "global CLAUDE.md install skipped: $($_.Exception.Message)"
 }
 
-# 6c. Settings.json hook merge (jq required)
+# 6c. Settings.json hook merge
+#
+# Primary path uses jq (same logic as install.sh). If jq isn't on PATH,
+# we use a pure-PowerShell fallback via ConvertTo-Json / ConvertFrom-Json
+# so Windows users don't need to install jq separately.
 $SettingsFile = Join-Path $ClaudeHome "settings.json"
 $jq = Get-Command jq -ErrorAction SilentlyContinue
-if (-not $jq) {
-    Warn "jq not found on PATH — skipping settings.json hook merge"
-    Warn "install jq (https://stedolan.github.io/jq/) and re-run, OR add manually to ~/.claude/settings.json hooks.SessionStart:"
-    Warn '  { "matcher": "", "hooks": [{ "type": "command", "command": "~/.claude/hooks/sessionstart-we-forge.sh" }] }'
-} elseif (-not (Test-Path $SettingsFile)) {
+
+function Merge-WeForgeSettingsPS {
+    param([string]$Path)
+    # Pure-PowerShell merge: same semantics as the jq expression below.
+    $existing = if (Test-Path $Path) {
+        try { Get-Content $Path -Raw | ConvertFrom-Json -AsHashtable } catch { @{} }
+    } else { @{} }
+    if (-not $existing) { $existing = @{} }
+    if (-not $existing.hooks) { $existing.hooks = @{} }
+    if (-not $existing.env)   { $existing.env   = @{} }
+
+    $hookSpecs = @(
+        @{event="SessionStart"; cmd="~/.claude/hooks/sessionstart-we-forge.sh"},
+        @{event="Stop";         cmd="~/.claude/hooks/stop-telemetry.sh"},
+        @{event="SubagentStop"; cmd="~/.claude/hooks/stop-telemetry.sh"}
+    )
+    foreach ($spec in $hookSpecs) {
+        $ev = $spec.event; $cmd = $spec.cmd
+        if (-not $existing.hooks[$ev]) { $existing.hooks[$ev] = @() }
+        $arr = @($existing.hooks[$ev])
+        $emptyMatchers = @($arr | Where-Object { $_.matcher -eq "" -or $null -eq $_.matcher })
+        if ($emptyMatchers.Count -eq 0) {
+            $arr += @{matcher=""; hooks=@(@{type="command"; command=$cmd})}
+        } else {
+            foreach ($grp in $emptyMatchers) {
+                if (-not $grp.hooks) { $grp.hooks = @() }
+                $cmds = @($grp.hooks | ForEach-Object { $_.command })
+                if ($cmds -notcontains $cmd) {
+                    $grp.hooks = @($grp.hooks) + @(@{type="command"; command=$cmd})
+                }
+            }
+        }
+        $existing.hooks[$ev] = $arr
+    }
+
+    $existingEccStr = if ($existing.env["ECC_DISABLED_HOOKS"]) { $existing.env["ECC_DISABLED_HOOKS"] } else { "" }
+    $additions      = "pre:edit-write:gateguard-fact-force,pre:bash:dispatcher,pre:edit-write:suggest-compact"
+    $merged = (($existingEccStr + "," + $additions) -split "," | Where-Object { $_.Length -gt 0 } | Sort-Object -Unique) -join ","
+    $existing.env["ECC_DISABLED_HOOKS"] = $merged
+
+    $existing | ConvertTo-Json -Depth 20
+}
+
+if (-not (Test-Path $SettingsFile)) {
     $snippet = @'
 {
   "env": {
@@ -215,7 +317,7 @@ if (-not $jq) {
 '@
     Set-Content -Path $SettingsFile -Value $snippet -Encoding UTF8
     OK "settings.json created with SessionStart hook + ECC_DISABLED_HOOKS"
-} else {
+} elseif ($jq) {
     $backup = "$SettingsFile.bak.$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ'))"
     Copy-Item -Path $SettingsFile -Destination $backup -Force
     $mergeExpr = @'
@@ -233,6 +335,24 @@ if (-not $jq) {
     | if (any(.matcher == "" or .matcher == null)) then . else . + [{matcher:"", hooks:[{type:"command", command:"~/.claude/hooks/sessionstart-we-forge.sh"}]}] end
   end
 ) |
+.hooks.Stop //= [] |
+.hooks.Stop |= (
+  if (length == 0) then
+    [{matcher:"", hooks:[{type:"command", command:"~/.claude/hooks/stop-telemetry.sh"}]}]
+  else
+    map(if (.matcher == "" or .matcher == null) then .hooks = ((.hooks // []) | if (map(.command) | index("~/.claude/hooks/stop-telemetry.sh")) then . else . + [{type:"command", command:"~/.claude/hooks/stop-telemetry.sh"}] end) else . end)
+    | if (any(.matcher == "" or .matcher == null)) then . else . + [{matcher:"", hooks:[{type:"command", command:"~/.claude/hooks/stop-telemetry.sh"}]}] end
+  end
+) |
+.hooks.SubagentStop //= [] |
+.hooks.SubagentStop |= (
+  if (length == 0) then
+    [{matcher:"", hooks:[{type:"command", command:"~/.claude/hooks/stop-telemetry.sh"}]}]
+  else
+    map(if (.matcher == "" or .matcher == null) then .hooks = ((.hooks // []) | if (map(.command) | index("~/.claude/hooks/stop-telemetry.sh")) then . else . + [{type:"command", command:"~/.claude/hooks/stop-telemetry.sh"}] end) else . end)
+    | if (any(.matcher == "" or .matcher == null)) then . else . + [{matcher:"", hooks:[{type:"command", command:"~/.claude/hooks/stop-telemetry.sh"}]}] end
+  end
+) |
 .env //= {} |
 .env.ECC_DISABLED_HOOKS = (
   ((.env.ECC_DISABLED_HOOKS // "") + ",pre:edit-write:gateguard-fact-force,pre:bash:dispatcher,pre:edit-write:suggest-compact")
@@ -242,9 +362,29 @@ if (-not $jq) {
     $merged = & jq $mergeExpr $SettingsFile
     if ($LASTEXITCODE -eq 0) {
         Set-Content -Path $SettingsFile -Value $merged -Encoding UTF8
-        OK "SessionStart hook merged into settings.json (backup: $backup)"
+        OK "settings.json merged via jq (hooks + ECC_DISABLED_HOOKS). backup: $backup"
     } else {
-        Warn "jq merge failed — settings.json unchanged (backup: $backup)"
+        Warn "jq merge failed — trying PowerShell fallback"
+        try {
+            $merged = Merge-WeForgeSettingsPS -Path $SettingsFile
+            Set-Content -Path $SettingsFile -Value $merged -Encoding UTF8
+            OK "settings.json merged via PowerShell fallback. backup: $backup"
+        } catch {
+            Warn "PowerShell fallback also failed: $($_.Exception.Message)"
+        }
+    }
+} else {
+    # No jq — use PowerShell fallback
+    $backup = "$SettingsFile.bak.$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ'))"
+    Copy-Item -Path $SettingsFile -Destination $backup -Force
+    try {
+        $merged = Merge-WeForgeSettingsPS -Path $SettingsFile
+        Set-Content -Path $SettingsFile -Value $merged -Encoding UTF8
+        OK "settings.json merged via PowerShell (jq not installed). backup: $backup"
+        Write-Host "    (install jq for faster merges: winget install jqlang.jq  — optional)" -ForegroundColor DarkGray
+    } catch {
+        Warn "settings.json merge failed: $($_.Exception.Message)"
+        Warn "manual fix: add SessionStart/Stop hooks + ECC_DISABLED_HOOKS env to $SettingsFile"
     }
 }
 
