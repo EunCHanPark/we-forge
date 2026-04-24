@@ -679,6 +679,13 @@ class TelegramNotifier:
                 "  이 도움말 (지금 보고 있는 화면)\n"
                 "\n"
                 "──────────────────────────────\n"
+                "세션 인식 안 될 때 (수동 등록)\n"
+                "  Claude Code 세션 내부에서:\n"
+                "  ! we-forgectl ping\n"
+                "  ! we-forgectl ping <라벨>   (예: ! we-forgectl ping work)\n"
+                "  → /status 에서 해당 세션이 표시됨\n"
+                "\n"
+                "──────────────────────────────\n"
                 "we-forge 는 무엇인가\n"
                 "  · Claude Code 위에서 24/7 패턴 학습 데몬\n"
                 "  · 사용자 작업을 관찰하고 ECC 마켓플레이스 스킬과 매칭\n"
@@ -1048,39 +1055,105 @@ def decode_project_path(encoded: str) -> str:
     return path
 
 
+HEARTBEAT_DIR = WE_FORGE_HOME / "heartbeats"
+
+
+def cmd_ping(label: str = "") -> int:
+    """Register the current Claude Code session with a heartbeat file.
+
+    Run `! we-forgectl ping` (or `! we-forgectl ping mylabel`) from inside any
+    Claude Code session.  we-forge will then list this session even if the
+    transcript file hasn't been written recently.
+
+    Heartbeat files live at ~/.we-forge/heartbeats/<pid>.json and expire after
+    the session window (default 60 min).
+    """
+    HEARTBEAT_DIR.mkdir(parents=True, exist_ok=True)
+    cwd = os.getcwd()
+    pid = os.getpid()
+    record = {
+        "ts":    now_iso(),
+        "epoch": time.time(),
+        "cwd":   cwd,
+        "pid":   pid,
+        "label": label or "",
+    }
+    hb_file = HEARTBEAT_DIR / f"{pid}.json"
+    hb_file.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+    ok(f"pinged  cwd={cwd}  pid={pid}")
+    info("we-forgectl sessions  — to verify this session is visible")
+    return 0
+
+
+def _read_heartbeats(cutoff: float) -> list[tuple[float, str, str]]:
+    """Return (mtime, label, cwd) for heartbeats newer than *cutoff*."""
+    rows: list[tuple[float, str, str]] = []
+    if not HEARTBEAT_DIR.exists():
+        return rows
+    for hb in HEARTBEAT_DIR.glob("*.json"):
+        try:
+            data  = json.loads(hb.read_text(encoding="utf-8"))
+            epoch = float(data.get("epoch") or hb.stat().st_mtime)
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        if epoch < cutoff:
+            try:
+                hb.unlink()   # prune expired heartbeat
+            except OSError:
+                pass
+            continue
+        cwd   = data.get("cwd") or "?"
+        label = data.get("label") or f"pid={data.get('pid','?')}"
+        rows.append((epoch, label, cwd))
+    return rows
+
+
 def format_active_sessions(window_min: int = 60, max_show: int = 10) -> str:
-    """List Claude Code sessions with transcript activity within *window_min* minutes."""
+    """List Claude Code sessions detected via transcript mtime OR heartbeat ping."""
     import datetime as _dt
-    projects = CLAUDE_HOME / "projects"
-    if not projects.exists():
-        return "active sessions: (no projects/ directory yet)"
     now    = time.time()
     cutoff = now - window_min * 60
-    rows   = []
-    for proj in projects.iterdir():
-        if not proj.is_dir():
-            continue
-        decoded = decode_project_path(proj.name)
-        for tx in proj.glob("*.jsonl"):
-            try:
-                mtime = tx.stat().st_mtime
-            except OSError:
+
+    # --- transcript-based detection ---
+    rows: list[tuple[float, str, str]] = []
+    projects = CLAUDE_HOME / "projects"
+    if projects.exists():
+        for proj in projects.iterdir():
+            if not proj.is_dir():
                 continue
-            if mtime < cutoff:
-                continue
-            rows.append((mtime, tx.stem, decoded))
+            decoded = decode_project_path(proj.name)
+            for tx in proj.glob("*.jsonl"):
+                try:
+                    mtime = tx.stat().st_mtime
+                except OSError:
+                    continue
+                if mtime < cutoff:
+                    continue
+                rows.append((mtime, tx.stem[:8], decoded))
+
+    # --- heartbeat-based detection (manual ping fallback) ---
+    seen_cwds = {r[2] for r in rows}
+    for epoch, label, cwd in _read_heartbeats(cutoff):
+        if cwd not in seen_cwds:
+            rows.append((epoch, f"ping:{label}", cwd))
+            seen_cwds.add(cwd)
+
     rows.sort(reverse=True)
     if not rows:
-        return f"active sessions (last {window_min}min): (none — all idle)"
+        return (
+            f"active sessions (last {window_min}min): (none — all idle)\n"
+            f"  tip: run  ! we-forgectl ping  from inside a session to register it"
+        )
     lines = [f"active sessions (last {window_min}min, {len(rows)} total):"]
     for mtime, sid, path in rows[:max_show]:
-        age_min  = int((now - mtime) / 60)
-        mark     = "⚡" if age_min < 5 else "🕐" if age_min < 30 else "💤"
-        ts_str   = _dt.datetime.fromtimestamp(mtime).strftime("%H:%M")
-        short    = path if len(path) <= 45 else "…" + path[-44:]
-        lines.append(f"  {mark} {sid[:8]} {ts_str} ({age_min}m) {short}")
+        age_min = int((now - mtime) / 60)
+        mark    = "⚡" if age_min < 5 else "🕐" if age_min < 30 else "💤"
+        ts_str  = _dt.datetime.fromtimestamp(mtime).strftime("%H:%M")
+        short   = path if len(path) <= 45 else "…" + path[-44:]
+        lines.append(f"  {mark} {sid}  {ts_str} ({age_min}m)  {short}")
     if len(rows) > max_show:
         lines.append(f"  … ({len(rows) - max_show} more)")
+    lines.append("  (run  ! we-forgectl ping  to register a session not shown above)")
     return "\n".join(lines)
 
 
@@ -1436,6 +1509,11 @@ def main() -> int:
     p_sessions.add_argument("--window", type=int, default=60,
                             help="look-back window in minutes (default: 60)")
 
+    p_ping = sp.add_parser("ping",
+        help="register the current session with we-forge (run inside a Claude Code session)")
+    p_ping.add_argument("label", nargs="?", default="",
+                        help="optional label shown in sessions list")
+
     args = p.parse_args()
     if not args.cmd:
         p.print_help()
@@ -1459,6 +1537,7 @@ def main() -> int:
         if args.cmd == "ecc-log":      return cmd_ecc_log(args.skill, args.reason, args.invoker)
         if args.cmd == "ecc-trace":    return cmd_ecc_trace(args.last, args.group)
         if args.cmd == "sessions":     return cmd_sessions(args.window)
+        if args.cmd == "ping":         return cmd_ping(args.label)
     except KeyboardInterrupt:
         print()
         return 130
