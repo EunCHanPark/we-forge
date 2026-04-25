@@ -170,13 +170,14 @@ _copy "$REPO_DIR/learning/redact.sh"    "$CLAUDE_HOME/learning/redact.sh"
 _copy "$REPO_DIR/learning/normalize.py" "$CLAUDE_HOME/learning/normalize.py"
 _copy "$REPO_DIR/learning/tick.sh"      "$CLAUDE_HOME/learning/tick.sh"
 
-_copy "$REPO_DIR/hooks/stop-telemetry.sh" "$CLAUDE_HOME/hooks/stop-telemetry.sh"
+_copy "$REPO_DIR/hooks/stop-telemetry.sh"      "$CLAUDE_HOME/hooks/stop-telemetry.sh"
+_copy "$REPO_DIR/hooks/sessionstart-we-forge.sh" "$CLAUDE_HOME/hooks/sessionstart-we-forge.sh"
 
 for a in monitor-sentinel pattern-detector skill-synthesizer quality-auditor we-forge; do
   _copy "$REPO_DIR/agents/$a.md" "$CLAUDE_HOME/agents/$a.md"
 done
 
-for c in watch-and-learn skill-report ask-codex ask-gemini; do
+for c in watch-and-learn skill-report ask-codex ask-gemini dashboard ping-forge; do
   _copy "$REPO_DIR/commands/$c.md" "$CLAUDE_HOME/commands/$c.md"
 done
 
