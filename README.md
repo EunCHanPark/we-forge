@@ -287,6 +287,7 @@ for ~96% of queue entries in normal use, keeping API costs minimal.
 ~/.we-forge/
 ├── config.json              {mode, interval_minutes, telegram_*, installed_at}
 ├── ecc-trace.jsonl          every ECC marketplace skill leverage (ROI proof)
+│                             schema: {ts: ISO8601 UTC, skill: str, reason: str, invoker: "cli"|"agent"}
 ├── heartbeats/              manual session registrations (PID-keyed heartbeat files)
 │   └── <pid>.json           {ts, epoch, cwd, pid, label} — expires after window
 ├── daemon.pid               PID file

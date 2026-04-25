@@ -47,13 +47,28 @@ marketplaces tree and would double-count.
      placeholders (same shape, different argument count),
    - shell-command heads match (`git status` vs `git status -sb`).
 2. **Drop candidates** that overlap **any** existing skill/instinct from the
-   four sources above:
-   - same `slug` as an existing skill directory or instinct `id`, OR
-   - existing `description` (or instinct `trigger`) already clearly covers
-     the pattern (substring match on the first 80 chars is sufficient signal).
-   When dropping a candidate because of an ECC marketplace match, include the
-   matching skill name in the `rationale` string of any *other* candidate's
-   JSON so the orchestrator can surface it as a recommendation.
+   four sources above. Use this **scored matching** (drop if total ≥ 3):
+   - **slug exact match** (existing dir/instinct id == candidate slug) → +5 (immediate drop)
+   - **slug token overlap** (≥ 50% of candidate slug tokens appear in
+     existing slug; tokens = split on `-`/`_`, ignore tokens < 3 chars) → +2
+   - **description keyword overlap** (≥ 2 content words from candidate
+     pattern appear in existing description's first 200 chars;
+     content words = ≥ 4 chars, excluding stop-list:
+     `the,and,for,with,this,that,from,into,when,where,which,after,before,
+     a,an,is,are,or,of,to,in,on,at`) → +2
+   - **command-head match** (first 2 shell tokens equal, e.g. `git status`
+     vs `git status -sb`) → +3
+   - **placeholder-shape match** (canonicalized forms identical except for
+     `<N>`/`<STR>`/`<PATH>`/`<HEX>`/`<UUID>` placeholders) → +3
+
+   In the 3-4 ambiguous band, prefer dropping when the match comes from
+   sources 2 or 3 (ECC marketplace / instincts) — those represent
+   battle-tested coverage. Single-signal substring matches (score 2) alone
+   are NOT sufficient.
+
+   When dropping for an ECC marketplace match, include the matching skill
+   name in the `rationale` of any *other* surviving candidate's JSON so the
+   orchestrator can surface it as a recommendation.
 3. **Rank remaining clusters** by total `count` across merged entries.
 4. **Emit JSON** on stdout — an array, one object per distinct candidate.
 
@@ -70,10 +85,18 @@ Print ONLY this JSON, nothing else:
     "sample_session_ids": ["sess-A","sess-B","sess-C"],
     "total_count": 5,
     "revise_count": 0,
-    "rationale": "3 merged queue entries; no existing learned skill covers 'git status' diagnostics"
+    "best_match_score": 2,
+    "best_match_skill": "git-workflow",
+    "best_match_source": "marketplace",
+    "rationale": "3 merged queue entries; closest ECC skill 'git-workflow' scored 2 (below drop threshold 3); proceeding to synthesis"
   }
 ]
 ```
+
+`best_match_score` is the highest dedupe score against any existing skill
+(0 if none scanned). `best_match_skill` and `best_match_source` (one of
+`learned`, `marketplace`, `instinct`, `evolved`) provide audit traceability
+for ECC_MATCH decisions in `ledger.jsonl`.
 
 When merging near-duplicate queue entries, the candidate's `revise_count`
 is the **maximum** `revise_count` across the merged entries. This lets the

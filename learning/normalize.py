@@ -47,6 +47,13 @@ Exclusion rules (in order):
   3. patterns already in promotion_queue.jsonl are skipped.
   4. patterns listed in rejected.txt are skipped.
   5. patterns with fewer than 3 distinct session_ids are held back.
+
+Queue maintenance (runs before adding new candidates):
+  - Entries with revise_count >= MAX_REVISE_COUNT are auto-rejected:
+    removed from promotion_queue.jsonl and appended to rejected.txt.
+    Prevents infinite REVISE loops that would otherwise burn API spend
+    every tick. The synthesizer/auditor increments revise_count; if a
+    pattern fails MAX_REVISE_COUNT audit cycles it is permanently poisoned.
 """
 from __future__ import annotations
 
@@ -59,6 +66,11 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
+
+
+# Auto-reject any promotion_queue entry that has been REVISE'd this many times.
+# Prevents infinite synthesis loops and runaway API spend.
+MAX_REVISE_COUNT = 3
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +309,25 @@ def main(argv: list[str]) -> int:
     learned = _load_learned_skill_slugs(learned_dir)
     rejected = _load_rejected(rejected_path)
     queue = _read_jsonl(queue_path)
+
+    # --- Queue maintenance: auto-reject entries that exceeded MAX_REVISE_COUNT.
+    # The synthesizer/auditor increments revise_count on each rewrite cycle;
+    # without this cap a stubborn pattern would re-circulate forever and the
+    # tick would invoke claude every cadence, accruing API cost indefinitely.
+    auto_rejected = [q for q in queue
+                     if int(q.get("revise_count", 0) or 0) >= MAX_REVISE_COUNT]
+    if auto_rejected:
+        queue = [q for q in queue
+                 if int(q.get("revise_count", 0) or 0) < MAX_REVISE_COUNT]
+        with rejected_path.open("a", encoding="utf-8") as rf:
+            for q in auto_rejected:
+                pat = q.get("pattern", "")
+                if pat and pat not in rejected:
+                    rf.write(pat + "\n")
+                    rejected.add(pat)
+        print(f"normalize: auto_rejected={len(auto_rejected)} "
+              f"(revise_count >= {MAX_REVISE_COUNT})")
+
     queued_patterns = {q["pattern"] for q in queue if "pattern" in q}
 
     added = 0
