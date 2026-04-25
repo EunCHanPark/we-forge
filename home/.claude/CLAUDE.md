@@ -66,20 +66,27 @@ The daemon collects events passively via Stop hook, but the live session model
 
 ---
 
-## ECC alignment disclosure (mandatory standing protocol)
+## Unified work protocol (mandatory standing protocol)
 
-**Open every major work response with explicit ECC marketplace skill mapping.**
-Format:
+Every response with substantive work runs in this order. Skip only for
+1-line replies, pure conversation, or no-file/no-code interactions.
 
 ```
-ECC 활용:
-- <skill-name> → <reason for this work block>
-- <skill-name> → <reason>
+1. advisor()  → get direction / approach / risk review
+2. ECC 활용:
+   - <skill-name> → <reason chosen based on advisor's direction>
+   then call: we-forgectl ecc-log <skill> "<reason>"
+3. Proceed with the work
+4. advisor() again before claiming completion → verify outcome matches scope
 ```
 
-Then call `we-forgectl ecc-log <skill> "<reason>"` for each leveraged skill so
-the ECC trace records ROI. This is the user's standing mandate — visibility
-into ECC marketplace utilization is non-negotiable.
+The advisor goes **first** — it shapes the approach. The ECC skill list is
+then chosen *based on* the advisor's direction, not before. After the work
+is done, a second advisor call verifies the result before completion-claim.
+
+This is the user's standing mandate. Both visibility into ECC marketplace
+utilization (step 2) and pre/post review by advisor (steps 1, 4) are
+non-negotiable.
 
 Reference: `~/.claude/projects/-Users-yukibana-we-forge/memory/ecc_alignment_protocol.md`
 
