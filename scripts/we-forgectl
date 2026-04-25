@@ -1080,7 +1080,13 @@ def cmd_ping(label: str = "") -> int:
     }
     hb_file = HEARTBEAT_DIR / f"{pid}.json"
     hb_file.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
-    ok(f"pinged  cwd={cwd}  pid={pid}")
+    print("================================================================")
+    print("✅  we-forge attached to this session")
+    print(f"    cwd:   {cwd}")
+    print(f"    pid:   {pid}")
+    if label:
+        print(f"    label: {label}")
+    print("================================================================")
     info("we-forgectl sessions  — to verify this session is visible")
     return 0
 
