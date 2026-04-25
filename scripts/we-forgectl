@@ -1173,18 +1173,40 @@ def cmd_sessions(window_min: int = 60) -> int:
 # ECC trace — record + report which ECC marketplace skills are used
 # ----------------------------------------------------------------------------
 
-def cmd_ecc_log(skill: str, reason: str, invoker: str = "cli") -> int:
-    """Append one ECC usage record to ~/.we-forge/ecc-trace.jsonl."""
+def cmd_ecc_log(
+    skill: str,
+    reason: str,
+    invoker: str = "cli",
+    match_method: str = "",
+    match_score=None,
+    decision_latency_ms=None,
+) -> int:
+    """Append one ECC usage record to ~/.we-forge/ecc-trace.jsonl.
+
+    Required: skill, reason. Optional metadata for ROI analytics:
+      match_method        — "manual" | "scored" | "exact-slug" | "keyword"
+      match_score         — int (pattern-detector dedupe score, 0-10)
+      decision_latency_ms — int (time spent deciding to leverage this skill)
+
+    Optional fields are omitted from the record when not provided so the
+    schema stays compact for trivial CLI logs.
+    """
     if not skill:
         fail("skill name required")
         return 2
     WE_FORGE_HOME.mkdir(parents=True, exist_ok=True)
-    record = {
+    record: dict = {
         "ts":      now_iso(),
         "skill":   skill.strip(),
         "reason":  reason.strip()[:200],
         "invoker": invoker,
     }
+    if match_method:
+        record["match_method"] = match_method
+    if match_score is not None:
+        record["match_score"] = int(match_score)
+    if decision_latency_ms is not None:
+        record["decision_latency_ms"] = int(decision_latency_ms)
     with ECC_TRACE_FILE.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
     ok(f"logged: {skill}")
@@ -1503,6 +1525,12 @@ def main() -> int:
                            help="short reason (why this skill was leveraged)")
     p_ecc_log.add_argument("--invoker", default="cli",
                            help="who logged it (cli/agent/tick/bot)")
+    p_ecc_log.add_argument("--match-method", default="",
+                           help="how the skill was matched (manual/scored/exact-slug/keyword)")
+    p_ecc_log.add_argument("--match-score", type=int, default=None,
+                           help="pattern-detector dedupe score (0-10)")
+    p_ecc_log.add_argument("--decision-latency-ms", type=int, default=None,
+                           help="ms spent deciding to leverage this skill")
 
     p_ecc_trace = sp.add_parser("ecc-trace",
         help="show ECC skill usage history (which ECC skills we-forge leveraged)")
@@ -1540,7 +1568,12 @@ def main() -> int:
         if args.cmd == "notify-test":  return cmd_notify_test()
         if args.cmd == "doctor":       return cmd_doctor()
         if args.cmd == "logs":         return cmd_logs(args.n)
-        if args.cmd == "ecc-log":      return cmd_ecc_log(args.skill, args.reason, args.invoker)
+        if args.cmd == "ecc-log":      return cmd_ecc_log(
+            args.skill, args.reason, args.invoker,
+            match_method=args.match_method,
+            match_score=args.match_score,
+            decision_latency_ms=args.decision_latency_ms,
+        )
         if args.cmd == "ecc-trace":    return cmd_ecc_trace(args.last, args.group)
         if args.cmd == "sessions":     return cmd_sessions(args.window)
         if args.cmd == "ping":         return cmd_ping(args.label)

@@ -287,7 +287,11 @@ for ~96% of queue entries in normal use, keeping API costs minimal.
 ~/.we-forge/
 ├── config.json              {mode, interval_minutes, telegram_*, installed_at}
 ├── ecc-trace.jsonl          every ECC marketplace skill leverage (ROI proof)
-│                             schema: {ts: ISO8601 UTC, skill: str, reason: str, invoker: "cli"|"agent"}
+│                             required: {ts: ISO8601 UTC, skill: str, reason: str, invoker: "cli"|"agent"}
+│                             optional: {match_method, match_score: int, decision_latency_ms: int}
+├── ecc-index.json           pre-built ECC marketplace keyword index (rebuilt at install + every 24h)
+│                             schema: {built_at: ISO8601 UTC, skill_count: int,
+│                                      skills: [{slug, name, description, tokens, source, path}]}
 ├── heartbeats/              manual session registrations (PID-keyed heartbeat files)
 │   └── <pid>.json           {ts, epoch, cwd, pid, label} — expires after window
 ├── daemon.pid               PID file

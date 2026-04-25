@@ -20,6 +20,29 @@ ECC marketplace, which ships hundreds of pre-built skills.
 {"pattern":"git status","samples":["git status"],"sample_session_ids":["sess-A","sess-B","sess-C"],"first_seen":"2026-04-23T12:00:00Z","last_seen":"2026-04-23T12:10:00Z","count":3,"revise_count":0,"enqueued_at":"2026-04-23T13:00:00Z","slug":"git-status"}
 ```
 
+### Pre-built ECC index (preferred fast path)
+
+Read `~/.we-forge/ecc-index.json` first if it exists. Schema:
+
+```json
+{
+  "built_at": "2026-04-26T12:00:00Z",
+  "skill_count": 485,
+  "skills": [
+    {"slug":"git-workflow","name":"git-workflow","description":"...",
+     "tokens":["branch","commit","hygiene"],"source":"marketplace","path":"..."}
+  ]
+}
+```
+
+When this index is present and `built_at` is within 24h, use it as the
+sole dedupe corpus — no SKILL.md scanning required. The `tokens` field
+is pre-computed (lowercase, ≥4 chars, stop-words removed) so keyword
+overlap scoring is a hash intersect.
+
+Fall back to the four-source rglob below only if the index is missing,
+older than 24h, or `skill_count == 0`.
+
 ### Existing skill / instinct sources (dedupe targets — check ALL FOUR)
 
 | # | Glob | Origin | Frontmatter |

@@ -166,9 +166,10 @@ _say "installing into $CLAUDE_HOME (dry-run=$DRY_RUN)"
 
 _run "mkdir -p \"$CLAUDE_HOME/agents\" \"$CLAUDE_HOME/commands\" \"$CLAUDE_HOME/hooks\" \"$CLAUDE_HOME/learning/data\" \"$CLAUDE_HOME/skills/learned\""
 
-_copy "$REPO_DIR/learning/redact.sh"    "$CLAUDE_HOME/learning/redact.sh"
-_copy "$REPO_DIR/learning/normalize.py" "$CLAUDE_HOME/learning/normalize.py"
-_copy "$REPO_DIR/learning/tick.sh"      "$CLAUDE_HOME/learning/tick.sh"
+_copy "$REPO_DIR/learning/redact.sh"          "$CLAUDE_HOME/learning/redact.sh"
+_copy "$REPO_DIR/learning/normalize.py"       "$CLAUDE_HOME/learning/normalize.py"
+_copy "$REPO_DIR/learning/tick.sh"            "$CLAUDE_HOME/learning/tick.sh"
+_copy "$REPO_DIR/learning/build_ecc_index.py" "$CLAUDE_HOME/learning/build_ecc_index.py"
 
 _copy "$REPO_DIR/hooks/stop-telemetry.sh"      "$CLAUDE_HOME/hooks/stop-telemetry.sh"
 _copy "$REPO_DIR/hooks/sessionstart-we-forge.sh" "$CLAUDE_HOME/hooks/sessionstart-we-forge.sh"
@@ -392,6 +393,18 @@ if [ -f "$WFCTL_SRC" ]; then
 else
   _warn "scripts/we-forgectl not found in repo; skipping service registration"
   NO_SERVICE=1
+fi
+
+# --- Build ECC marketplace keyword index (one-shot at install time) ---
+# pattern-detector reads this to dedupe candidates against ~485 marketplace
+# skills without re-scanning files every tick. Empty index is harmless
+# on a fresh install where no plugins are present yet — tick.sh refreshes.
+if [ "$DRY_RUN" = "1" ]; then
+  _say "DRY: would build ECC keyword index via build_ecc_index.py"
+elif [ -f "$CLAUDE_HOME/learning/build_ecc_index.py" ]; then
+  _say "building ECC marketplace keyword index"
+  python3 "$CLAUDE_HOME/learning/build_ecc_index.py" || \
+    _warn "ecc-index build reported issues (non-fatal; tick.sh will retry)"
 fi
 
 if [ "$NO_SERVICE" = "1" ]; then

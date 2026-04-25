@@ -296,6 +296,33 @@ _main() {
     _log "normalize.py missing at $NORMALIZE_PY"
   fi
 
+  # Refresh ECC keyword index if older than 24h or missing.
+  local idx="${WE_FORGE_HOME:-$HOME/.we-forge}/ecc-index.json"
+  local idx_builder="$CLAUDE_HOME/learning/build_ecc_index.py"
+  if [ -f "$idx_builder" ]; then
+    local idx_mtime now stale=1
+    if [ -f "$idx" ]; then
+      if stat -f%m "$idx" >/dev/null 2>&1; then
+        idx_mtime="$(stat -f%m "$idx")"
+      else
+        idx_mtime="$(stat -c%Y "$idx" 2>/dev/null)"
+      fi
+      now="$(date +%s)"
+      [ $(( now - ${idx_mtime:-0} )) -lt 86400 ] && stale=0
+    fi
+    if [ "$stale" = "1" ]; then
+      python3 "$idx_builder" >>"$LOG" 2>&1 || _log "ecc-index rebuild failed"
+    fi
+  fi
+
+  # Export learning paths for the we-forge agent invocation below.
+  # Without explicit export, the agent inherits launchd/systemd minimal env
+  # and falls back to defaults — which breaks when CLAUDE_LEARNING_DATA or
+  # CLAUDE_HOME were overridden at install time.
+  export CLAUDE_LEARNING_DATA="$DATA_DIR"
+  export CLAUDE_LEARNED_SKILLS="${CLAUDE_LEARNED_SKILLS:-$CLAUDE_HOME/skills/learned}"
+  export WE_FORGE_HOME="${WE_FORGE_HOME:-$HOME/.we-forge}"
+
   if _queue_nonempty; then
     _invoke_watch_and_learn
   else

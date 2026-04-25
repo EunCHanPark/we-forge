@@ -23,12 +23,13 @@
 | EP-ECC-001 | ECC alignment disclosure protocol | [DONE] | 2026-04-26 — SessionStart reminder + simplified format |
 | EP-DOC-001 | Documentation update for sessions/ping | [DONE] | 2026-04-26 — README, CHANGELOG, DOCS-KO, CLAUDE.md |
 | EP-RVC-001 | promotion_queue revise_count auto-reject | [DONE] | 2026-04-26 — cap at 3, prevents infinite REVISE loops |
-| EP-DDP-001 | Pattern-detector dedupe accuracy | [WIP] | 2026-04-26 — improved heuristics + match scoring |
+| EP-DDP-001 | Pattern-detector dedupe accuracy | [DONE] | 2026-04-26 — improved heuristics + match scoring |
+| EP-DDP-002 | ECC marketplace keyword index | [DONE] | 2026-04-26 — build_ecc_index.py, install + 24h refresh in tick.sh |
+| EP-MET-001 | ecc-trace ROI metric enrichment | [DONE] | 2026-04-26 — match_method/match_score/decision_latency_ms (optional) |
+| EP-ENV-001 | tick.sh env export to we-forge agent | [DONE] | 2026-04-26 — CLAUDE_LEARNING_DATA/CLAUDE_LEARNED_SKILLS/WE_FORGE_HOME |
 
 ## Backlog
 
 | EP | Title | Priority | Notes |
 |----|-------|----------|-------|
 | EP-HNS-002 | we-forgectl CI integration | LOW | Test harness for tick processing |
-| EP-DDP-002 | ECC marketplace keyword index | MEDIUM | Pre-build at install time for faster + accurate dedupe |
-| EP-MET-001 | ecc-trace ROI metric enrichment | MEDIUM | Add match_method, decision_latency_ms, skill_sha to schema |
