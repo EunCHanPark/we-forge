@@ -11,6 +11,7 @@
 | EP | Title | Status | Notes |
 |----|-------|--------|-------|
 | EP-HNS-001 | Harness initial scaffold | [DONE] | Flat layout applied 2026-04-25 |
+| EP-SES-001 | Session detection (auto + manual) | [DONE] | sessions/ping commands, heartbeat tracking (2026-04-25) |
 
 ## Backlog
 

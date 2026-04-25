@@ -283,6 +283,37 @@ Claude Code 세션 안에서 자연어로:
 ```
 → Telemetry + 대기 패턴 + 학습된 skill + 최근 판정 종합 리포트.
 
+### 5-2a. 세션 감지 및 수동 등록
+
+we-forge는 활성 Claude Code 세션을 자동 감지하지만, 세션이 idle 상태일 때 
+명시적으로 등록할 수도 있습니다.
+
+**자동 감지** — transcript 파일 수정 시각 기준:
+```bash
+# 지난 60분 내 활성 세션 조회
+we-forgectl sessions
+
+# 지난 120분 내 활성 세션 조회
+we-forgectl sessions --window 120
+```
+
+**수동 등록** — heartbeat ping 방식 (세션 idle 시):
+```bash
+# 현재 세션을 we-forge에 등록
+! we-forgectl ping
+
+# 레이블과 함께 등록 (선택사항)
+! we-forgectl ping my-feature-branch
+```
+
+Claude Code 세션 안에서:
+```
+/ping-forge
+/ping-forge my-feature-branch
+```
+
+Heartbeat 파일은 자동으로 60분 후 만료되며, `we-forgectl status`에서도 세션 목록을 확인할 수 있습니다.
+
 ### 5-3. 타 LLM 위임 (`/ask-codex`, `/ask-gemini`)
 
 Claude Code 세션 안에서:

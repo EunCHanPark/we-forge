@@ -6,6 +6,38 @@ All notable changes to we-forge are documented in this file. Format follows
 
 ## [Unreleased]
 
+### New Features
+
+- **`we-forgectl sessions [--window N]`** — list active Claude Code sessions
+  detected via transcript mtime (automatic) or heartbeat ping (manual).
+  Default window: 60 minutes. Shows session age, path, and detection method.
+  
+- **`we-forgectl ping [label]`** — manually register the current session with
+  we-forge. Writes a heartbeat file to `~/.we-forge/heartbeats/<pid>.json`.
+  Useful when a session is idle or transcript mtime isn't available. Exposed
+  as `/ping-forge` slash command for in-session use.
+
+### Improvements
+
+- **`we-forgectl status` now shows active sessions** inline, combining both
+  automatic (transcript) and manual (heartbeat) detection methods.
+  
+- **Session detection refactoring:** `decode_project_path()` improved from
+  O(2^n) exponential to O(n) greedy algorithm for faster project path
+  decoding. Handles hidden directories (`.claude`) correctly.
+  
+- **`we-forgectl ping` shows prominent attachment banner** on successful
+  registration — visual confirmation that session is attached.
+  
+- **SessionStart hook** now includes `/ping-forge` in quick-commands list.
+
+### Files changed
+
+| Path | Change |
+|------|--------|
+| `scripts/we-forgectl` | +cmd_ping, +cmd_sessions, +format_active_sessions, session detection in status |
+| `commands/ping-forge.md` | new slash command documentation (KO) |
+
 ## [0.4.6] — 2026-04-25
 
 Unix install.sh now auto-registers `~/.local/bin` on PATH (matches the

@@ -14,7 +14,9 @@ from any directory**. Source: https://github.com/EunCHanPark/we-forge
 ### Available everywhere (no setup needed)
 
 - **CLI**: `we-forgectl` is on `PATH` at `~/.local/bin/we-forgectl`
-  - `we-forgectl status`             — running state, interval, next aligned tick
+  - `we-forgectl status`             — running state, interval, next tick, active sessions
+  - `we-forgectl sessions [--window N]` — list active Claude Code sessions (last N min)
+  - `we-forgectl ping [label]`       — register current session (heartbeat fallback)
   - `we-forgectl set-interval <분>`  — change tick + telegram cadence (1-1440 min)
   - `we-forgectl logs`               — recent ticks
   - `we-forgectl ecc-trace --group`  — ECC marketplace skill usage histogram
@@ -24,6 +26,7 @@ from any directory**. Source: https://github.com/EunCHanPark/we-forge
 - **Agent**: spawn via `Agent(subagent_type="we-forge")` for tick processing
 - **Sub-agents**: monitor-sentinel, pattern-detector, skill-synthesizer, quality-auditor
 - **Slash commands** (work in any cwd):
+  - `/ping-forge` — register this session with we-forge (manual heartbeat ping)
   - `/skill-report` — 6-section report (telemetry, top patterns, ECC matches, learned skills, decisions)
   - `/watch-and-learn` — manually trigger the synthesize-and-audit loop
   - `/dashboard [serve|tui|once]` — KPI dashboard

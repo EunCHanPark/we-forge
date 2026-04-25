@@ -147,9 +147,11 @@ Hot-reloaded by the daemon — no restart required.
 Single CLI for the whole lifecycle:
 
 ```bash
-we-forgectl status                    # service state + interval + next tick
+we-forgectl status                    # service state + interval + next tick + active sessions
 we-forgectl set-interval <minutes>    # change unified cadence (1-1440)
 we-forgectl start | stop | restart    # lifecycle
+we-forgectl sessions [--window N]     # list active Claude Code sessions (last N minutes)
+we-forgectl ping [label]              # register current session with heartbeat (manual fallback)
 we-forgectl tui                       # ratatui-powered control TUI
 we-forgectl dashboard                 # open http://127.0.0.1:8765 dashboard
 we-forgectl logs                      # tail recent ticks
@@ -166,12 +168,48 @@ we-forgectl uninstall                 # safety-backup → remove
 ## Use inside Claude Code
 
 ```
+/ping-forge       # register this session with we-forge (manual session detection)
 /skill-report     # 6-section report: telemetry, top patterns, ECC matches, learned, decisions
 /dashboard        # web dashboard at http://127.0.0.1:8765
 /dashboard tui    # rich-powered terminal UI (pip install rich)
 /dashboard once   # one-shot stdout snapshot, no deps
 /watch-and-learn  # manually trigger the synthesize-and-audit loop
 ```
+
+---
+
+## Session detection — automatic + manual
+
+we-forge automatically detects active Claude Code sessions via transcript file 
+timestamps. Two detection modes:
+
+| Mode | Trigger | Method | Window | Command |
+|------|---------|--------|--------|---------|
+| **Automatic** | On transcript write | Scan `~/.claude/projects/*/` for `.jsonl` mtime | 60 min | `we-forgectl sessions` |
+| **Manual** | Session idle / not detected | Heartbeat ping from inside session | 60 min | `! we-forgectl ping [label]` or `/ping-forge` |
+
+**Use manual ping when:**
+- Session is idle (no transcript writes)
+- Transcript file path changed (new project directory)
+- Session exists but transcript mtime is stale
+- You want explicit confirmation of attachment
+
+**Heartbeat files** live at `~/.we-forge/heartbeats/<pid>.json` and expire 
+automatically after the window (default 60 min). Multiple PCs can ping 
+independently — each registers its own sessions.
+
+```bash
+# List all active sessions in last 60 minutes (combines both modes)
+we-forgectl sessions
+
+# List active sessions in last 2 hours
+we-forgectl sessions --window 120
+
+# Manually register this session from inside Claude Code
+! we-forgectl ping my-feature-branch
+```
+
+The `/ping-forge` slash command is a convenience wrapper for `! we-forgectl ping`.
 
 ---
 
@@ -249,6 +287,8 @@ for ~96% of queue entries in normal use, keeping API costs minimal.
 ~/.we-forge/
 ├── config.json              {mode, interval_minutes, telegram_*, installed_at}
 ├── ecc-trace.jsonl          every ECC marketplace skill leverage (ROI proof)
+├── heartbeats/              manual session registrations (PID-keyed heartbeat files)
+│   └── <pid>.json           {ts, epoch, cwd, pid, label} — expires after window
 ├── daemon.pid               PID file
 ├── last_telegram_sent_at    throttle state (single ISO-8601 line)
 └── install-pending.sh       fallback installer for staged skills
