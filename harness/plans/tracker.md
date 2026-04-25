@@ -27,6 +27,10 @@
 | EP-DDP-002 | ECC marketplace keyword index | [DONE] | 2026-04-26 — build_ecc_index.py, install + 24h refresh in tick.sh |
 | EP-MET-001 | ecc-trace ROI metric enrichment | [DONE] | 2026-04-26 — match_method/match_score/decision_latency_ms (optional) |
 | EP-ENV-001 | tick.sh env export to we-forge agent | [DONE] | 2026-04-26 — CLAUDE_LEARNING_DATA/CLAUDE_LEARNED_SKILLS/WE_FORGE_HOME |
+| EP-PROT-001 | Unified work protocol (advisor → ECC) | [DONE] | 2026-04-26 — advisor first/last + ECC alignment in middle (CLAUDE.md+memory+SessionStart hook) |
+| EP-AUD-001 | we-forgectl audit tool | [DONE] | 2026-04-26 — cross-references patterns.jsonl + ledger.jsonl + rejected.txt |
+| EP-GAP-B  | no-ledger gap investigation (B task) | [DONE] | 2026-04-26 — confirmed pipeline integrity; 6 entries were REJECTED (in rejected.txt), not gaps |
+| EP-MAT-001 | ECC_MATCH ledger traceability (C task) | [DONE] | 2026-04-26 — agent spec mandates ecc_skill/ecc_source/match_score on every ECC_MATCH |
 
 ## Backlog
 

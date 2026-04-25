@@ -171,9 +171,24 @@ compress oldest section to a single rollup line.
    {"ts":"<iso8601>","decision":"PASS","slug":"<slug>","installed":true,"path":"~/.claude/skills/learned/<slug>/SKILL.md","auditor_score":<float>,"rationale":"<short>"}
    {"ts":"<iso8601>","decision":"REVISE","slug":"<slug>","revise_count":<int>,"reason":"<auditor verdict>"}
    {"ts":"<iso8601>","decision":"REJECT","slug":"<slug>","reason":"<auditor verdict>"}
-   {"ts":"<iso8601>","decision":"ECC_MATCH","slug":"<slug>","ecc_skill":"<name>","count":<int>}
+   {"ts":"<iso8601>","decision":"ECC_MATCH","slug":"<slug>","ecc_skill":"<name>","ecc_source":"marketplace|learned|instinct|evolved","match_score":<int>,"count":<int>}
    {"ts":"<iso8601>","decision":"DROP","slug":"<slug>","reason":"primitive|self-reference|<other>"}
    ```
+
+   **ECC_MATCH traceability is mandatory** — `ecc_skill`, `ecc_source`,
+   and `match_score` must be present on every ECC_MATCH record. Empty
+   strings or omitted keys are not acceptable. The pattern-detector
+   reports its `best_match_skill` / `best_match_source` / `best_match_score`
+   for exactly this purpose; pass them through verbatim. Audit tooling
+   relies on these fields to verify match quality without re-running
+   the detector. If pattern-detector did not surface a match (score 0),
+   the candidate should never have been classified ECC_MATCH — re-route
+   to synthesis instead.
+
+   **Scope**: this requirement applies *prospectively* — historical
+   ECC_MATCH ledger entries written before 2026-04-26 will not be
+   backfilled. Audit tooling treats absent fields on pre-revision
+   records as "untraceable but processed."
 
    Then append one line per decision to `MEMORY.md` per the memory policy.
 
