@@ -1229,9 +1229,14 @@ def cmd_audit(top_n: int = 30) -> int:
     learn = Path.home() / ".claude" / "learning" / "data"
     pat_path = learn / "patterns.jsonl"
     led_path = learn / "ledger.jsonl"
+    rej_path = learn / "rejected.txt"
     if not pat_path.exists():
         warn(f"no patterns yet: {pat_path}")
         return 0
+    rejected_set: set[str] = set()
+    if rej_path.exists():
+        rejected_set = {ln.strip() for ln in rej_path.read_text(encoding="utf-8").splitlines()
+                        if ln.strip()}
     patterns = []
     with pat_path.open(encoding="utf-8") as f:
         for ln in f:
@@ -1269,9 +1274,12 @@ def cmd_audit(top_n: int = 30) -> int:
             last = decisions[-1]
             verdict = last.get("decision", "?")
             reason = (last.get("reason") or "")[:60]
+        elif pat in rejected_set:
+            verdict = "REJECTED"
+            reason = "in rejected.txt (skipped from queue)"
         else:
             verdict = "no-ledger"
-            reason = "(never reached ledger)"
+            reason = "(never reached ledger — investigate)"
         rows.append((cnt, verdict, pat[:60], reason, slug))
     rows.sort(key=lambda r: -r[0])
     print(f"==> audit: top {top_n} patterns (count >= 3, distinct sessions >= 3)")
