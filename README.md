@@ -278,7 +278,7 @@ for ~96% of queue entries in normal use, keeping API costs minimal.
 │   ├── tick.sh              entry point with --dangerously-skip-permissions
 │   ├── normalize.py         canonicalization + promotion rule
 │   ├── redact.sh            secret filter (--self-test)
-│   └── data/                events / patterns / queue / ledger / state
+│   └── data/                events / patterns / queue / ledger / state / sequence_candidates
 ├── skills/learned/          synthesized skills (auditor-passed)
 └── agent-memory/we-forge/
     ├── MEMORY.md            persistent agent memory across ticks

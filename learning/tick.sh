@@ -296,6 +296,16 @@ _main() {
     _log "normalize.py missing at $NORMALIZE_PY"
   fi
 
+  # Sequence-pattern extractor (shadow mode — emits SEQ_CANDIDATE only).
+  # Independent of normalize.py: reads the same events.jsonl but groups
+  # by session + 5-min window to surface multi-step workflows that the
+  # single-event normalizer cannot see.
+  local seq_py="$CLAUDE_HOME/learning/sequence_normalize.py"
+  if [ -f "$seq_py" ]; then
+    CLAUDE_LEARNING_DATA="$DATA_DIR" \
+      python3 "$seq_py" >>"$LOG" 2>&1 || _log "sequence_normalize.py failed"
+  fi
+
   # Refresh ECC keyword index if older than 24h or missing.
   local idx="${WE_FORGE_HOME:-$HOME/.we-forge}/ecc-index.json"
   local idx_builder="$CLAUDE_HOME/learning/build_ecc_index.py"

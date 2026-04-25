@@ -31,6 +31,7 @@
 | EP-AUD-001 | we-forgectl audit tool | [DONE] | 2026-04-26 — cross-references patterns.jsonl + ledger.jsonl + rejected.txt |
 | EP-GAP-B  | no-ledger gap investigation (B task) | [DONE] | 2026-04-26 — confirmed pipeline integrity; 6 entries were REJECTED (in rejected.txt), not gaps |
 | EP-MAT-001 | ECC_MATCH ledger traceability (C task) | [DONE] | 2026-04-26 — agent spec mandates ecc_skill/ecc_source/match_score on every ECC_MATCH |
+| EP-SEQ-001 | Multi-step sequence pattern detection (A task) | [DONE] | 2026-04-26 — sequence_normalize.py with N=2..4, MIN_SUPPORT=3, self-loop collapse, shadow mode SEQ_CANDIDATE verdict |
 
 ## Backlog
 

@@ -36,6 +36,7 @@ The verdict drives both the queue update (step 10) and the ledger write
 | `REJECT`    | quality-auditor rejected; pattern poisoned via `rejected.txt` | synthesizer + auditor | remove       |
 | `ECC_MATCH` | pattern already covered by an ECC marketplace skill           | none (zero-spend)     | remove (no poison) |
 | `DROP`      | shell primitive / single-tool baseline / self-reference noise | none (zero-spend)     | remove + add slug to primitive blocklist |
+| `SEQ_CANDIDATE` | multi-step workflow surfaced by sequence_normalize.py (shadow mode — observation only, no synthesis) | none (zero-spend) | n/a (separate file: `sequence_candidates.jsonl`) |
 
 `DROP` is a **zero-spend short-circuit**: the orchestrator decides without
 dispatching synthesizer or auditor. Its scope is strictly limited (see
