@@ -697,12 +697,16 @@ class TelegramNotifier:
         return f"unknown command: {cmd}\nsend /help for the full list"
 
     def _cmd_report(self) -> str:
-        # Locate dashboard.py — handle the case where we-forgectl was copied to
-        # ~/.local/bin/ (so __file__.parent.parent is ~/.local/, not the repo).
+        # Locate dashboard.py. Search order:
+        #   1. ~/.claude/dashboard/dashboard.py — primary install location
+        #      (install.sh deploys here, works on every PC)
+        #   2. <we-forgectl_dir>/../dashboard/dashboard.py — repo dev mode
+        #   3. ~/we-forge/dashboard/dashboard.py — common manual-clone path
+        # No user-specific absolute paths anywhere.
         candidates = [
+            CLAUDE_HOME / "dashboard" / "dashboard.py",
             Path(__file__).resolve().parent.parent / "dashboard" / "dashboard.py",
             Path.home() / "we-forge" / "dashboard" / "dashboard.py",
-            Path("/Users/yukibana/we-forge/dashboard/dashboard.py"),
         ]
         dashboard_path = next((p for p in candidates if p.exists()), None)
         if not dashboard_path:

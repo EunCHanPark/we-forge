@@ -35,6 +35,7 @@
 | EP-BF-001 | Historical ECC_MATCH backfill | [DONE] | 2026-04-26 — backfill_ecc_match.py: 271/271 records gain ecc_source + match_score |
 | EP-MON-001 | match_score quality monitor | [DONE] | 2026-04-26 — `we-forgectl ecc-quality` flags entries below threshold |
 | EP-DSH-001 | Dashboard sequence metrics | [DONE] | 2026-04-26 — top_sequences + totals.sequences in compute_kpis(); --once renders sequences section |
+| EP-PORT-001 | Cross-PC portability fixes | [DONE] | 2026-04-26 — install.sh deploys dashboard.py + hardcoded path removed from we-forgectl + CLAUDE.md template path generalized |
 
 ## Backlog
 
