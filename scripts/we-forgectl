@@ -1300,6 +1300,59 @@ def cmd_audit(top_n: int = 30) -> int:
     return 0
 
 
+def cmd_ecc_quality(score_threshold: int = 3) -> int:
+    """Inspect ECC_MATCH match_score distribution; flag low-confidence matches.
+
+    Surfaces entries below `score_threshold` as candidates for REVISE
+    downgrade — they were classified ECC_MATCH but the dedupe scoring
+    is weak enough that the matched skill may not actually cover the
+    user's workflow.
+    """
+    led_path = Path.home() / ".claude" / "learning" / "data" / "ledger.jsonl"
+    if not led_path.exists():
+        warn(f"no ledger: {led_path}")
+        return 0
+    from collections import Counter
+    score_dist: Counter = Counter()
+    flagged: list = []
+    skill_counts: Counter = Counter()
+    with led_path.open(encoding="utf-8") as f:
+        for ln in f:
+            try:
+                d = json.loads(ln)
+            except Exception:
+                continue
+            if d.get("decision") != "ECC_MATCH":
+                continue
+            score = d.get("match_score")
+            if score is None:
+                score_dist["unknown"] += 1
+                continue
+            score_dist[int(score)] += 1
+            skill_counts[d.get("ecc_skill", "?")] += 1
+            if int(score) < score_threshold:
+                flagged.append(d)
+    print(f"==> ECC_MATCH match_score distribution (threshold={score_threshold})")
+    for s in sorted(score_dist.keys(),
+                    key=lambda k: (-1 if k == "unknown" else int(k))):
+        marker = " ⚠️" if isinstance(s, int) and s < score_threshold else ""
+        print(f"  score {str(s):<8} {score_dist[s]:>4}{marker}")
+    print()
+    print(f"==> top matched ECC skills (top 10)")
+    for skill, n in skill_counts.most_common(10):
+        print(f"  {n:>4}  {skill}")
+    print()
+    if flagged:
+        print(f"==> ⚠️  {len(flagged)} entries below score_threshold "
+              f"(REVISE downgrade candidates)")
+        for d in flagged[:15]:
+            print(f"  {d.get('slug',''):<35} score={d.get('match_score','?')} "
+                  f"ecc_skill={d.get('ecc_skill','?')}")
+    else:
+        print(f"==> all ECC_MATCH entries score >= {score_threshold} ✓")
+    return 0
+
+
 def cmd_ecc_trace(last_n: int = 20, group: bool = False) -> int:
     """Show ECC usage history, newest first.
 
@@ -1632,6 +1685,11 @@ def main() -> int:
     p_audit.add_argument("--top", type=int, default=30,
                          help="how many top-count patterns to show (default 30)")
 
+    p_eccq = sp.add_parser("ecc-quality",
+        help="inspect ECC_MATCH match_score distribution; flag weak matches")
+    p_eccq.add_argument("--threshold", type=int, default=3,
+                        help="flag entries with match_score below this (default 3)")
+
     p_sessions = sp.add_parser("sessions",
         help="list active Claude Code sessions (transcript activity in last N minutes)")
     p_sessions.add_argument("--window", type=int, default=60,
@@ -1670,6 +1728,7 @@ def main() -> int:
         )
         if args.cmd == "ecc-trace":    return cmd_ecc_trace(args.last, args.group)
         if args.cmd == "audit":        return cmd_audit(args.top)
+        if args.cmd == "ecc-quality":  return cmd_ecc_quality(args.threshold)
         if args.cmd == "sessions":     return cmd_sessions(args.window)
         if args.cmd == "ping":         return cmd_ping(args.label)
     except KeyboardInterrupt:

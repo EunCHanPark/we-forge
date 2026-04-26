@@ -32,6 +32,9 @@
 | EP-GAP-B  | no-ledger gap investigation (B task) | [DONE] | 2026-04-26 — confirmed pipeline integrity; 6 entries were REJECTED (in rejected.txt), not gaps |
 | EP-MAT-001 | ECC_MATCH ledger traceability (C task) | [DONE] | 2026-04-26 — agent spec mandates ecc_skill/ecc_source/match_score on every ECC_MATCH |
 | EP-SEQ-001 | Multi-step sequence pattern detection (A task) | [DONE] | 2026-04-26 — sequence_normalize.py with N=2..4, MIN_SUPPORT=3, self-loop collapse, shadow mode SEQ_CANDIDATE verdict |
+| EP-BF-001 | Historical ECC_MATCH backfill | [DONE] | 2026-04-26 — backfill_ecc_match.py: 271/271 records gain ecc_source + match_score |
+| EP-MON-001 | match_score quality monitor | [DONE] | 2026-04-26 — `we-forgectl ecc-quality` flags entries below threshold |
+| EP-DSH-001 | Dashboard sequence metrics | [DONE] | 2026-04-26 — top_sequences + totals.sequences in compute_kpis(); --once renders sequences section |
 
 ## Backlog
 

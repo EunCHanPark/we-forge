@@ -171,6 +171,7 @@ _copy "$REPO_DIR/learning/normalize.py"          "$CLAUDE_HOME/learning/normaliz
 _copy "$REPO_DIR/learning/tick.sh"               "$CLAUDE_HOME/learning/tick.sh"
 _copy "$REPO_DIR/learning/build_ecc_index.py"    "$CLAUDE_HOME/learning/build_ecc_index.py"
 _copy "$REPO_DIR/learning/sequence_normalize.py" "$CLAUDE_HOME/learning/sequence_normalize.py"
+_copy "$REPO_DIR/learning/backfill_ecc_match.py" "$CLAUDE_HOME/learning/backfill_ecc_match.py"
 
 _copy "$REPO_DIR/hooks/stop-telemetry.sh"      "$CLAUDE_HOME/hooks/stop-telemetry.sh"
 _copy "$REPO_DIR/hooks/sessionstart-we-forge.sh" "$CLAUDE_HOME/hooks/sessionstart-we-forge.sh"

@@ -211,6 +211,13 @@ def compute_kpis() -> dict[str, Any]:
     total_dec = sum(decision_counts.values()) or 1
     ecc_match_ratio = decision_counts.get("ECC_MATCH", 0) / total_dec
 
+    # --- Sequence candidates (shadow-mode multi-step learning) ---
+    sequences = _read_jsonl(DATA_DIR / "sequence_candidates.jsonl")
+    top_sequences = sorted(
+        sequences,
+        key=lambda c: (-int(c.get("support", 0)), int(c.get("n", 0))),
+    )[:10]
+
     return {
         "generated_at": now.isoformat(),
         "claude_home":  str(CLAUDE_HOME),
@@ -222,6 +229,7 @@ def compute_kpis() -> dict[str, Any]:
             "learned":       len(learned),
             "marketplace":   len(marketplace_skills),
             "instincts":     instinct_count,
+            "sequences":     len(sequences),
         },
         "events_per_day":   sorted(events_per_day.items()),
         "top_patterns":     top_patterns,
@@ -232,6 +240,7 @@ def compute_kpis() -> dict[str, Any]:
         "recent_decisions": recent_decisions,
         "queue":            queue[:10],
         "dead_candidates":  dead_candidates,
+        "top_sequences":    top_sequences,
     }
 
 
@@ -252,6 +261,7 @@ def render_once() -> None:
     print(f"  learned:      {t['learned']:>6}")
     print(f"  marketplace:  {t['marketplace']:>6}")
     print(f"  ECC instincts:{t['instincts']:>6}")
+    print(f"  sequences:    {t.get('sequences', 0):>6}  (shadow mode)")
     print()
     print(f"  ECC_MATCH ratio: {k['ecc_match_ratio']*100:.1f}% of decisions")
     print(f"  decisions: {k['decisions']}")
@@ -271,6 +281,14 @@ def render_once() -> None:
         print(f"Dead skill candidates ({len(k['dead_candidates'])}):")
         for c in k["dead_candidates"][:10]:
             print(f"  {c['slug']}  (PASS'd at {c['passed_at']})")
+    if k.get("top_sequences"):
+        print()
+        print(f"Top sequence candidates (shadow mode, n={t.get('sequences',0)} total):")
+        for c in k["top_sequences"]:
+            seq = " -> ".join(c.get("sequence", []))
+            if len(seq) > 90:
+                seq = seq[:87] + "..."
+            print(f"  support={c.get('support','?'):>3} n={c.get('n','?')} {seq}")
 
 
 # ----------------------------------------------------------------------------
