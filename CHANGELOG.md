@@ -6,6 +6,23 @@ All notable changes to we-forge are documented in this file. Format follows
 
 ## [Unreleased]
 
+**Date**: 2026-04-26 | **Commits**: 15 EPs | **Pattern-learning integrations**: Major
+
+### New Commands
+
+- **`we-forgectl audit [--top N]`** (EP-AUD-001) — cross-validate `patterns.jsonl` +
+  `ledger.jsonl` + `rejected.txt`. Shows classification accuracy, queued-but-not-ledgered
+  gaps, and top mismatches.
+
+- **`we-forgectl ecc-quality [--threshold N]`** (EP-MON-001) — inspect `ecc-trace.jsonl`
+  match_score distribution across ECC_MATCH verdicts. Flags entries below quality
+  threshold (default 70).
+
+- **`we-forgectl ecc-log` option extensions** (EP-MET-001):
+  - `--match-method <str>` — optional strategy identifier (e.g., "slug-exact", "keyword-overlap")
+  - `--match-score <int>` — optional numeric quality metric (0-100)
+  - `--decision-latency-ms <int>` — optional deduplication decision time
+
 ### New Features
 
 - **`we-forgectl sessions [--window N]`** — list active Claude Code sessions
@@ -16,6 +33,20 @@ All notable changes to we-forge are documented in this file. Format follows
   we-forge. Writes a heartbeat file to `~/.we-forge/heartbeats/<pid>.json`.
   Useful when a session is idle or transcript mtime isn't available. Exposed
   as `/ping-forge` slash command for in-session use.
+
+- **Multi-step workflow pattern detection** (EP-SEQ-001) — `sequence_normalize.py`
+  detects N-gram sequences (N=2..4) with ≥3 support across distinct sessions.
+  Shadow mode: emits `SEQ_CANDIDATE` verdicts, 1-week observation before audit
+  pipeline integration.
+
+- **ECC marketplace keyword indexing** (EP-DDP-002) — `build_ecc_index.py` pre-builds
+  `~/.we-forge/ecc-index.json` (485 skills, built_at timestamp). Rebuilt at install
+  + every 24h via `tick.sh`. Enables 5-signal scored matching (slug-exact +5,
+  slug-token +2, keyword-overlap +2, command-head +3, placeholder-shape +3, threshold=3).
+
+- **Historical ECC_MATCH backfill** (EP-BF-001) — `backfill_ecc_match.py` enriches
+  past ledger entries with mandatory `ecc_skill`, `ecc_source`, `match_score` fields.
+  Cleaned 271/271 records (2026-04-26).
 
 ### Improvements
 
@@ -29,14 +60,71 @@ All notable changes to we-forge are documented in this file. Format follows
 - **`we-forgectl ping` shows prominent attachment banner** on successful
   registration — visual confirmation that session is attached.
   
-- **SessionStart hook** now includes `/ping-forge` in quick-commands list.
+- **SessionStart hook** now includes `/ping-forge` in quick-commands list + 4-step
+  unified work protocol reminder (advisor → ECC → work → advisor).
+
+- **ECC_MATCH traceability mandatory** (EP-MAT-001) — every ECC_MATCH verdict now
+  includes `ecc_skill` (slug), `ecc_source` ("marketplace"|"learned"|"instinct"|"evolved"),
+  and `match_score` (int 0-100) fields. Auditor spec updated to enforce.
+
+- **Promotion queue auto-reject on revise overflow** (EP-RVC-001) — `normalize.py`
+  caps `revise_count` at 3; subsequent failures auto-REJECT + poison to `rejected.txt`.
+  Prevents infinite REVISE loops.
+
+- **Pattern-detector matching accuracy** (EP-DDP-001) — improved from substring to
+  5-signal scored matching (see ECC index feature above). Reduced false positives.
+
+- **New `tick.sh` env exports** (EP-ENV-001) — available to we-forge agent:
+  - `CLAUDE_LEARNING_DATA` (path to `~/.claude/learning/data`)
+  - `CLAUDE_LEARNED_SKILLS` (path to `~/.claude/skills/learned`)
+  - `WE_FORGE_HOME` (path to `~/.we-forge`)
+
+- **Unified work protocol** (EP-PROT-001) — CLAUDE.md + SessionStart hook +
+  agent-memory standardize the 4-step: advisor() → ECC 활용 → work → advisor().
+  Mandatory for ECC marketplace ROI transparency.
+
+- **Cross-PC portability** (EP-PORT-001):
+  - Removed hardcoded `/Users/yukibana/...` paths from we-forgectl
+  - `install.sh` now deploys `dashboard.py` + `sequence_normalize.py` + `backfill_ecc_match.py`
+  - CLAUDE.md template paths generalized to `<dash-encoded-cwd>` pattern
+  - Verified: fresh PC simulation, 12/12 files deployed correctly
+
+- **Claude Desktop compatibility verified** (EP-PORT-001) — tested with homunculus
+  sessions (`cowork` / `code` / `dispatch` modes). Captured 48 events over 24h.
+  No additional config required.
+
+- **New verdict type: SEQ_CANDIDATE** (EP-SEQ-001) — shadow-mode observation of
+  multi-step workflows. Records to `sequence_candidates.jsonl`. Auditor bypass
+  (zero-spend); 1-week collection before integration into audit pipeline.
+
+- **Dashboard sequence metrics** (EP-DSH-001) — `/dashboard` web + TUI modes now show
+  `top_sequences` (most common N-gram patterns) + `totals.sequences` (count).
+  `--once` mode renders sequences section to stdout.
+
+### Fixes
+
+- **Bootstrap completeness** (EP-INS-002) — SessionStart hook now deployed at install,
+  `/ping-forge` and `/dashboard` commands included in quick-startup list.
 
 ### Files changed
 
 | Path | Change |
 |------|--------|
-| `scripts/we-forgectl` | +cmd_ping, +cmd_sessions, +format_active_sessions, session detection in status |
+| `scripts/we-forgectl` | +cmd_ping, +cmd_sessions, +cmd_audit, +cmd_ecc_quality, session detection in status, ecc-log option extensions |
 | `commands/ping-forge.md` | new slash command documentation (KO) |
+| `learning/build_ecc_index.py` | new: ECC marketplace keyword index builder (485 skills) |
+| `learning/sequence_normalize.py` | new: multi-step N-gram detection (shadow mode) |
+| `learning/backfill_ecc_match.py` | new: historical ledger enrichment |
+| `learning/normalize.py` | +MAX_REVISE_COUNT=3 auto-reject, improved dedupe matching |
+| `learning/tick.sh` | +24h ECC index refresh, +sequence_normalize call, +env exports |
+| `agents/pattern-detector.md` | updated: 5-signal scoring (slug-exact/token/keyword/command/shape) |
+| `agents/we-forge.md` | updated: SEQ_CANDIDATE verdict, ECC_MATCH mandatory fields |
+| `home/.claude/CLAUDE.md` | template: 4-step protocol (advisor → ECC → work → advisor) |
+| `hooks/sessionstart.sh` | new: protocol reminder, quick-command hints |
+| `install.sh` | +dashboard.py, +sequence_normalize.py, +backfill_ecc_match.py deployment, path portability fixes |
+| `README.md` | +new commands/options, +Claude Desktop section, +4-step protocol, +verdict types |
+| `DOCS-KO.md` | Korean translation of all updates |
+| `harness/plans/tracker.md` | all 16 EPs marked [DONE] as of 2026-04-26 |
 
 ## [0.4.6] — 2026-04-25
 

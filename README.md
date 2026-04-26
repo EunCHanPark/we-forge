@@ -156,8 +156,13 @@ we-forgectl tui                       # ratatui-powered control TUI
 we-forgectl dashboard                 # open http://127.0.0.1:8765 dashboard
 we-forgectl logs                      # tail recent ticks
 we-forgectl doctor                    # diagnose dependencies
-we-forgectl ecc-trace --group         # show ECC marketplace skill usage
+we-forgectl ecc-trace --group         # show ECC marketplace skill usage histogram
 we-forgectl ecc-log <skill> <reason>  # record a manual ECC skill leverage
+  [--match-method <str>]              # (optional) matching strategy identifier
+  [--match-score <int>]               # (optional) numeric match quality (0-100)
+  [--decision-latency-ms <int>]       # (optional) milliseconds to dedupe decision
+we-forgectl audit [--top N]           # cross-validate patterns / ledger / rejected entries
+we-forgectl ecc-quality [--threshold N] # inspect ECC_MATCH match_score distribution
 we-forgectl notify-test               # send Telegram ping (if enabled)
 we-forgectl install --enable-telegram # opt-in Telegram bot (daemon mode)
 we-forgectl uninstall                 # safety-backup → remove
@@ -251,19 +256,25 @@ Disable without uninstalling: `we-forgectl install` (re-runs without
 
 ## Agent v2 — verdict vocabulary
 
-Every queued pattern exits with **exactly one** of five verdicts. Every
+Every queued pattern exits with **exactly one** of six verdicts. Every
 verdict is recorded in `~/.claude/learning/data/ledger.jsonl`:
 
 | Verdict       | Meaning                                                       | Sub-agents | Queue action |
 |---------------|---------------------------------------------------------------|------------|--------------|
 | `PASS`        | Auditor approved, skill installed                             | synthesizer + auditor | remove |
-| `REVISE`      | Auditor asked for rewrite                                     | synthesizer + auditor | rewrite (`revise_count += 1`) |
-| `REJECT`      | Auditor rejected; pattern poisoned to never re-queue          | synthesizer + auditor | remove |
-| `ECC_MATCH`   | Already covered by ECC marketplace skill                      | none (zero-spend)     | remove (no poison) |
+| `REVISE`      | Auditor asked for rewrite (max 3 attempts)                    | synthesizer + auditor | rewrite (`revise_count += 1`) or REJECT |
+| `REJECT`      | Auditor rejected; pattern poisoned to never re-queue          | synthesizer + auditor | remove + `rejected.txt` |
+| `ECC_MATCH`   | Already covered by ECC marketplace skill (with match_score)   | none (zero-spend)     | remove (no poison) |
 | `DROP`        | Shell primitive / single-tool baseline / self-reference noise | none (zero-spend)     | remove (regex blocklist) |
+| `SEQ_CANDIDATE` | Multi-step workflow sequence (shadow mode, 1-week observation) | none (shadow)         | track in `sequence_candidates.jsonl` |
 
 **Zero-spend short-circuits** (DROP + ECC_MATCH) avoid sub-agent dispatch
 for ~96% of queue entries in normal use, keeping API costs minimal.
+
+**ECC_MATCH mandatory fields** (2026-04-26 onwards):
+- `ecc_skill`: marketplace skill slug
+- `ecc_source`: "marketplace" | "learned" | "instinct" | "evolved"
+- `match_score`: numeric quality 0-100
 
 ---
 
@@ -278,7 +289,10 @@ for ~96% of queue entries in normal use, keeping API costs minimal.
 │   ├── tick.sh              entry point with --dangerously-skip-permissions
 │   ├── normalize.py         canonicalization + promotion rule
 │   ├── redact.sh            secret filter (--self-test)
-│   └── data/                events / patterns / queue / ledger / state / sequence_candidates
+│   ├── build_ecc_index.py   ECC marketplace keyword index builder (485 skills)
+│   ├── sequence_normalize.py multi-step workflow N-gram detection (shadow mode)
+│   ├── backfill_ecc_match.py historical ECC_MATCH record enrichment
+│   └── data/                events / patterns / queue / ledger / state / sequence_candidates / rejected.txt
 ├── skills/learned/          synthesized skills (auditor-passed)
 └── agent-memory/we-forge/
     ├── MEMORY.md            persistent agent memory across ticks
@@ -377,6 +391,41 @@ Optional:
 | macOS 14+ arm64   | ✓      | launchd `KeepAlive=true` or cron           | `aarch64-apple-darwin`     |
 | Ubuntu 22.04+     | ✓      | systemd user timer or cron                 | `x86_64-unknown-linux-gnu` |
 | Windows 11 + WSL  | ✓      | Task Scheduler → `wsl.exe ... we-forgectl` | `x86_64-pc-windows-msvc`   |
+
+### Claude Desktop integration
+
+we-forge **transparently integrates** with Claude Desktop's
+`cowork` / `code` / `dispatch` modes (homunculus-based sessions):
+
+- **Session auto-detection** works across desktop, web, and CLI modes
+- **Stop hooks** capture transcripts from desktop sessions automatically
+- **Verified 24h**: captured 48 events in desktop homunculus sessions
+- **Caveats**: claude.ai web (no local filesystem access), unsupported
+
+No additional configuration needed — install once, works everywhere.
+
+---
+
+## Unified Work Protocol (Claude Code sessions)
+
+A 4-step workflow for maximum ECC marketplace ROI and pattern clarity:
+
+```
+1. advisor()                          ← check direction / approach / risks
+   ↓
+2. ECC 활용: <skill> → <reason>       ← explicit marketplace alignment
+   then: we-forgectl ecc-log <skill> "<reason>"
+   ↓
+3. Do the work                        ← implement / explore / refactor
+   ↓
+4. advisor()                          ← verify quality / completeness
+```
+
+**Why**: Transparently documents which ECC skills shaped your approach
+(traceability → ROI), and advisor gates prevent rework.
+
+**Automated reminders**: SessionStart hook in `~/.claude/hooks/` shows the
+protocol on session attach. CLAUDE.md template includes this pattern.
 
 ---
 
