@@ -75,8 +75,18 @@ cat <<'FOOTER'
 
 quick commands:
   /skill-report          - full report
-  we-forgectl status     - service + cadence
+  we-forgectl status     - service + cadence + skill-suggest hit rate
   we-forgectl ecc-trace --group   - ECC skill histogram
+  we-forgectl skill-hits - skill-suggest hit rate detail (24h)
+
+PROTOCOL (skill-suggest era + announce, 2026-04-30):
+  Every user prompt → UserPromptSubmit hook auto-injects top-3 ECC skill
+  candidates (IDF-weighted, ~480 marketplace skills).
+    • Match fits intent → "💡 skill-suggest: <name> 사용합니다." + Skill()
+    • Suggestions but no match → "skill-suggest: N 후보, 무관 — 일반 진행"
+    • Empty injection → silent skip (off-domain prompts).
+  Advisor pre/post no longer mandatory (call Agent(subagent_type="Plan")
+  only for multi-file architectural or hard-to-reverse changes).
 ================================================================
 FOOTER
 

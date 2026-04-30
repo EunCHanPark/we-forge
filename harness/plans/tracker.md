@@ -36,6 +36,8 @@
 | EP-MON-001 | match_score quality monitor | [DONE] | 2026-04-26 — `we-forgectl ecc-quality` flags entries below threshold |
 | EP-DSH-001 | Dashboard sequence metrics | [DONE] | 2026-04-26 — top_sequences + totals.sequences in compute_kpis(); --once renders sequences section |
 | EP-PORT-001 | Cross-PC portability fixes | [DONE] | 2026-04-26 — install.sh deploys dashboard.py + hardcoded path removed from we-forgectl + CLAUDE.md template path generalized |
+| EP-SUG-001 | skill-suggest era (UserPromptSubmit hook auto-injection) | [DONE] | 2026-04-27 — replaces advisor-strict mandate; IDF-weighted ECC skill suggestion via hook |
+| EP-SUG-002 | skill-suggest announce + use protocol | [DONE] | 2026-04-30 — silent compliance reverted; one-line announcement of suggestion outcome restores user observability |
 
 ## Backlog
 
