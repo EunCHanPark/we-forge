@@ -221,10 +221,22 @@ cd we-forge
 # 자체 테스트 먼저
 ./install.sh --test
 
-# 설치 (~/.claude/ 에 파일 복사 + settings.json Stop hook 병합 + 백업)
+# 설치
+#   - ~/.claude/ 에 파일 복사 + settings.json Stop hook 병합 + 백업
+#   - we-forgectl install 자동 호출 → launchd LaunchAgent 등록까지 완료
 ./install.sh
 
-# install.sh 가 출력하는 "macOS scheduler" 블록의 명령을 그대로 실행:
+# 동작 확인
+we-forgectl status
+tail -n 10 ~/.claude/learning/data/tick.log
+```
+
+스케줄러 등록을 본인이 직접 하고 싶으면:
+
+```bash
+./install.sh --no-service          # 파일만 복사
+we-forgectl install                # 본인 타이밍에 launchd 등록
+# 또는 plist 직접 편집:
 mkdir -p ~/Library/LaunchAgents
 sed -e "s|__USER__|$USER|g" \
     -e "s|__HOME__|$HOME|g" \
@@ -232,10 +244,6 @@ sed -e "s|__USER__|$USER|g" \
     "$(pwd)/launchd/com.we-forge-tick.plist.template" \
     > "$HOME/Library/LaunchAgents/com.$USER.we-forge-tick.plist"
 launchctl load -w "$HOME/Library/LaunchAgents/com.$USER.we-forge-tick.plist"
-
-# 즉시 한 번 수동 실행 (선택)
-launchctl start com.$USER.we-forge-tick
-tail -n 10 ~/.claude/learning/data/tick.log
 ```
 
 ### 4-3. Linux
@@ -244,8 +252,14 @@ tail -n 10 ~/.claude/learning/data/tick.log
 git clone https://github.com/EunCHanPark/we-forge.git
 cd we-forge
 ./install.sh --test
-./install.sh
+./install.sh                       # systemd user unit 자동 등록
+we-forgectl status
+```
 
+자동 등록을 끄고 cron 으로 돌리고 싶으면:
+
+```bash
+./install.sh --no-service
 crontab -e
 # 붙여넣기:
 0 * * * * /bin/bash -lc '~/.claude/learning/tick.sh >> ~/.claude/learning/data/tick.log 2>&1'

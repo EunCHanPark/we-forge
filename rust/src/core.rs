@@ -81,6 +81,12 @@ pub mod paths {
     pub fn backup_dir()    -> PathBuf { we_forge_home().join("backup") }
     pub fn daemon_pid()    -> PathBuf { we_forge_home().join("daemon.pid") }
 
+    pub fn heartbeats_dir() -> PathBuf { we_forge_home().join("heartbeats") }
+    pub fn suggest_log()    -> PathBuf { we_forge_home().join("skill-suggestions.jsonl") }
+    pub fn turns_log()      -> PathBuf { we_forge_home().join("turns.jsonl") }
+    pub fn ecc_index_file() -> PathBuf { we_forge_home().join("ecc-index.json") }
+    pub fn learning_data_dir() -> PathBuf { claude_home().join("learning/data") }
+
     pub fn macos_launch_agents() -> PathBuf {
         dirs::home_dir().expect("home dir").join("Library/LaunchAgents")
     }

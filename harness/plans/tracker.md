@@ -38,6 +38,7 @@
 | EP-PORT-001 | Cross-PC portability fixes | [DONE] | 2026-04-26 — install.sh deploys dashboard.py + hardcoded path removed from we-forgectl + CLAUDE.md template path generalized |
 | EP-SUG-001 | skill-suggest era (UserPromptSubmit hook auto-injection) | [DONE] | 2026-04-27 — replaces advisor-strict mandate; IDF-weighted ECC skill suggestion via hook |
 | EP-SUG-002 | skill-suggest announce + use protocol | [DONE] | 2026-04-30 — silent compliance reverted; one-line announcement of suggestion outcome restores user observability |
+| EP-PARITY-001 | Rust CLI ↔ docs parity for missing subcommands | [DONE] | 2026-05-11 — sessions/ping/audit/ecc-quality/skill-suggest/skill-hits ported to Rust (v0.4.7); install.ps1 fetches dashboard.py + dashboard/ping-forge slash commands; install.sh + DOCS-KO scheduler text reconciled with auto-register behavior |
 
 ## Backlog
 

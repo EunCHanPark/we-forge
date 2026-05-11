@@ -191,6 +191,21 @@ try {
     Warn "learning runtime install skipped: $($_.Exception.Message)"
 }
 
+# 6a-2b. Dashboard (web KPI viewer launched by `we-forgectl dashboard`)
+#
+# Without this file `we-forgectl dashboard` exits with "dashboard.py not found"
+# and the /dashboard slash command fails on Windows. install.sh copies it from
+# the cloned repo; the native Windows path fetches it via raw URL.
+try {
+    $DashDir = Join-Path $ClaudeHome "dashboard"
+    New-Item -ItemType Directory -Force -Path $DashDir | Out-Null
+    $dashDest = Join-Path $DashDir "dashboard.py"
+    Invoke-WebRequest -Uri "$RawBase/dashboard/dashboard.py" -OutFile $dashDest -UseBasicParsing
+    OK "dashboard.py installed -> $dashDest"
+} catch {
+    Warn "dashboard.py install skipped: $($_.Exception.Message)"
+}
+
 # 6a-3. Agent definitions (5 sub-agents) — spawned by we-forge tick loop
 try {
     $AgentsDir = Join-Path $ClaudeHome "agents"
@@ -208,7 +223,7 @@ try {
 try {
     $CommandsDir = Join-Path $ClaudeHome "commands"
     New-Item -ItemType Directory -Force -Path $CommandsDir | Out-Null
-    foreach ($c in @("watch-and-learn","skill-report","ask-codex","ask-gemini")) {
+    foreach ($c in @("watch-and-learn","skill-report","ask-codex","ask-gemini","dashboard","ping-forge")) {
         try {
             $dest = Join-Path $CommandsDir "$c.md"
             Invoke-WebRequest -Uri "$RawBase/commands/$c.md" -OutFile $dest -UseBasicParsing

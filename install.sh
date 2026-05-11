@@ -24,7 +24,9 @@
 #   - seed empty data files in $CLAUDE_HOME/learning/data/
 #   - jq-merge the Stop-hook entry into $CLAUDE_HOME/settings.json
 #     (existing entries preserved; previous file backed up to settings.json.bak.<ISO>)
-#   - print the crontab/launchd/systemd line; does NOT modify the user's scheduler
+#   - register the launchd / systemd / Task Scheduler service automatically
+#     by invoking `we-forgectl install` at the end (skipped via --no-service);
+#     pass --enable-telegram / --daemon to forward to we-forgectl install
 
 set -euo pipefail
 

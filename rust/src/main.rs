@@ -101,6 +101,60 @@ enum Cmd {
         #[arg(long)]
         group: bool,
     },
+
+    /// List active Claude Code sessions detected via transcript activity + heartbeats.
+    Sessions {
+        /// Window in minutes to consider a session active.
+        #[arg(long, default_value_t = 60)]
+        window: i64,
+    },
+
+    /// Register the current session (heartbeat fallback when transcript not detected).
+    Ping {
+        /// Optional label shown in `we-forgectl sessions`.
+        #[arg(default_value = "")]
+        label: String,
+    },
+
+    /// Cross-validate patterns / ledger / rejected entries to surface pipeline gaps.
+    Audit {
+        /// Show top-N qualifying patterns.
+        #[arg(long, default_value_t = 30)]
+        top: usize,
+    },
+
+    /// Inspect ECC_MATCH match_score distribution; flag low-confidence matches.
+    EccQuality {
+        /// Score below this is treated as a REVISE downgrade candidate.
+        #[arg(long, default_value_t = 3)]
+        threshold: i64,
+    },
+
+    /// Suggest ECC marketplace skills for a prompt (used by UserPromptSubmit hook).
+    SkillSuggest {
+        /// Prompt text (positional). Pass empty/short prompts → silent skip.
+        #[arg(default_value = "")]
+        prompt: String,
+        /// Top-N suggestions to emit.
+        #[arg(long, default_value_t = 3)]
+        top: usize,
+        /// Emit a system-reminder block (for UserPromptSubmit hook injection).
+        #[arg(long)]
+        inject: bool,
+        /// Append the result to ~/.we-forge/skill-suggestions.jsonl + turns.jsonl.
+        #[arg(long)]
+        log: bool,
+        /// Claude Code session id (passed by hook for join with turns.jsonl).
+        #[arg(long, default_value = "")]
+        session_id: String,
+    },
+
+    /// Show skill-suggest hit rate (suggested vs invoked) over a time window.
+    SkillHits {
+        /// Window in hours.
+        #[arg(long, default_value_t = 24)]
+        hours: i64,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -143,5 +197,17 @@ fn main() -> anyhow::Result<()> {
             invoker,
         } => cli::ecc::log(&skill, &reason, &invoker),
         Cmd::EccTrace { last, group } => cli::ecc::trace(last, group),
+        Cmd::Sessions { window } => cli::sessions::run(window),
+        Cmd::Ping { label } => cli::ping::run(&label),
+        Cmd::Audit { top } => cli::audit::run(top),
+        Cmd::EccQuality { threshold } => cli::ecc_quality::run(threshold),
+        Cmd::SkillSuggest {
+            prompt,
+            top,
+            inject,
+            log,
+            session_id,
+        } => cli::skill_suggest::run(&prompt, top, inject, log, &session_id),
+        Cmd::SkillHits { hours } => cli::skill_hits::run(hours),
     }
 }
