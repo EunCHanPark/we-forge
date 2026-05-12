@@ -20,30 +20,33 @@ ECC marketplace, which ships hundreds of pre-built skills.
 {"pattern":"git status","samples":["git status"],"sample_session_ids":["sess-A","sess-B","sess-C"],"first_seen":"2026-04-23T12:00:00Z","last_seen":"2026-04-23T12:10:00Z","count":3,"revise_count":0,"enqueued_at":"2026-04-23T13:00:00Z","slug":"git-status"}
 ```
 
-### Pre-built ECC index (preferred fast path)
+### Pre-built skill index (preferred fast path — read this FIRST)
 
-Read `~/.we-forge/ecc-index.json` first if it exists. Schema:
+`~/.claude/agent-memory/we-forge/skill-index.jsonl` is a flat, pre-built dedupe
+corpus covering **all four** skill/instinct sources. `tick.sh` rebuilds it (via
+`learning/build-skill-index.sh`) at install and whenever it is older than 24h.
+First line is metadata; each remaining line is one skill:
 
 ```json
-{
-  "built_at": "2026-04-26T12:00:00Z",
-  "skill_count": 485,
-  "skills": [
-    {"slug":"git-workflow","name":"git-workflow","description":"...",
-     "tokens":["branch","commit","hygiene"],"source":"marketplace","path":"..."}
-  ]
-}
+{"_meta":true,"built_at":"2026-05-12T03:00:00Z","counts":{"learned":0,"marketplace":207,"instinct":0,"evolved":0},"total":207}
+{"source":"marketplace","slug":"git-workflow","name":"git-workflow","desc_head":"Git branching, commit hygiene, ..."}
+{"source":"learned","slug":"jq-extract-field","name":"jq-extract-field","desc_head":"Use when extracting a field from JSON ..."}
 ```
 
-When this index is present and `built_at` is within 24h, use it as the
-sole dedupe corpus — no SKILL.md scanning required. The `tokens` field
-is pre-computed (lowercase, ≥4 chars, stop-words removed) so keyword
-overlap scoring is a hash intersect.
+When this file exists and `_meta.built_at` is within ~25h, **use it as the sole
+dedupe corpus** — do not glob or Read any SKILL.md / instinct YAML. `desc_head`
+(first 160 chars of `description` / instinct `trigger`) is enough signal for the
+keyword-overlap scoring below.
 
-Fall back to the four-source rglob below only if the index is missing,
-older than 24h, or `skill_count == 0`.
+Optionally, if `~/.we-forge/ecc-index.json` is also present and fresh, you may
+use its pre-tokenized `tokens` arrays (lowercase, ≥4 chars, stop-words removed)
+for cheaper keyword-overlap scoring against marketplace skills — but it is *not*
+required; `skill-index.jsonl` alone is sufficient.
 
-### Existing skill / instinct sources (dedupe targets — check ALL FOUR)
+Fall back to the four-source rglob below **only** if `skill-index.jsonl` is
+missing, malformed, or `_meta.built_at` is stale (> 25h).
+
+### Existing skill / instinct sources (dedupe targets — fallback only, when the index is unavailable)
 
 | # | Glob | Origin | Frontmatter |
 |---|------|--------|-------------|
@@ -139,21 +142,24 @@ If nothing is worth synthesizing, emit `[]`.
 ## Typical flow
 
 1. Read `~/.claude/learning/data/promotion_queue.jsonl`.
-2. Glob the **four** dedupe sources and Read each:
-   - `~/.claude/skills/learned/*/SKILL.md`
-   - `~/.claude/plugins/marketplaces/**/SKILL.md`
-   - `~/.claude/homunculus/projects/*/instincts/personal/*.yaml`
-   - `~/.claude/homunculus/projects/*/evolved/skills/*/SKILL.md` and
-     `~/.claude/homunculus/evolved/skills/*/SKILL.md`
-   Extract frontmatter (`name`/`description` or `id`/`trigger`).
-3. Cluster queue entries.
-4. Filter out overlaps with **any** dedupe source. Marketplace and ECC
-   instinct matches take priority — those represent skills the user already
-   has access to and we-forge should never re-create.
+2. Read `~/.claude/agent-memory/we-forge/skill-index.jsonl` (one Read).
+   - If present and `_meta.built_at` is within ~25h → this is your full dedupe
+     corpus. **Skip step 2-fallback entirely.**
+   - If missing / malformed / stale → **fallback**: glob the four sources and
+     Read each (`skills/learned/*/SKILL.md`, `plugins/marketplaces/**/SKILL.md`,
+     `homunculus/projects/*/instincts/personal/*.yaml`,
+     `homunculus/{projects/*/,}evolved/skills/*/SKILL.md`), extracting
+     `name`/`description` (or `id`/`trigger`). Skip `plugins/cache/**`.
+3. Cluster queue entries (near-duplicate rules above).
+4. Score each cluster against the corpus; drop if total ≥ 3. Marketplace and
+   instinct matches take priority in the 3–4 ambiguous band. For an ECC drop,
+   stash `best_match_*` on a surviving candidate so the orchestrator can surface
+   the recommendation.
 5. Emit the JSON array.
 
 ## Performance notes
 
-The marketplace glob can return ~1000 files. Use Grep with a head pattern
-on the frontmatter (`^name:` and `^description:`) instead of full file Reads
-when possible — you only need the first 5-10 lines of each SKILL.md.
+The fast path (step 2) is **one Read of `skill-index.jsonl`** (a few hundred
+lines) — no SKILL.md scanning. Only the rare fallback touches the ~1000-file
+marketplace tree; there, prefer Grep on `^name:` / `^description:` over full
+Reads (you only need the first 5–10 lines of each SKILL.md).

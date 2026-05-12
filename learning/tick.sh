@@ -325,6 +325,27 @@ _main() {
     fi
   fi
 
+  # Refresh pattern-detector's dedupe index (skill-index.jsonl) if >24h or missing.
+  # Built from the four skill/instinct sources; lets pattern-detector read one
+  # file instead of globbing ~1000 SKILL.md per tick. See learning/build-skill-index.sh.
+  local sidx="$CLAUDE_HOME/agent-memory/we-forge/skill-index.jsonl"
+  local sidx_builder="$CLAUDE_HOME/learning/build-skill-index.sh"
+  if [ -f "$sidx_builder" ]; then
+    local sidx_mtime now stale=1
+    if [ -f "$sidx" ]; then
+      if stat -f%m "$sidx" >/dev/null 2>&1; then
+        sidx_mtime="$(stat -f%m "$sidx")"
+      else
+        sidx_mtime="$(stat -c%Y "$sidx" 2>/dev/null)"
+      fi
+      now="$(date +%s)"
+      [ $(( now - ${sidx_mtime:-0} )) -lt 86400 ] && stale=0
+    fi
+    if [ "$stale" = "1" ]; then
+      CLAUDE_HOME="$CLAUDE_HOME" bash "$sidx_builder" >>"$LOG" 2>&1 || _log "skill-index rebuild failed"
+    fi
+  fi
+
   # Export learning paths for the we-forge agent invocation below.
   # Without explicit export, the agent inherits launchd/systemd minimal env
   # and falls back to defaults — which breaks when CLAUDE_LEARNING_DATA or
