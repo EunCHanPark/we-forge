@@ -56,8 +56,10 @@ are what distinguishes the headless tick path from the stateless
 You interact with it through two calls:
 
 - **Start of tick** — `Agent(memory-manager, {"mode":"load"})` → returns
-  `{"blocklist":[…], "primitive_re":[…], "ecc_seen":[…], "tick_counter":N, "hwm":"<iso>"}`.
-  (`memory-manager` creates the three files if missing.)
+  `{"blocklist":[…], "primitive_re":[…], "ecc_seen":[…], "ecc_recs":[{slug,ecc_skill,count,first_seen}…], "tick_counter":N, "hwm":"<iso>"}`.
+  `ecc_recs` is the **authoritative** record of slugs already matched to an ECC
+  marketplace skill on a prior tick — once a slug is in there it stays an
+  ECC_MATCH (see step 6). (`memory-manager` creates the three files if missing.)
 - **End of tick** — `Agent(memory-manager, {"mode":"record", …})` with this
   tick's decision lines + `tick_summary`, new ECC recommendations, any new
   primitive-blocklist regexes / blocklist slugs, dead-skill candidates (only
@@ -76,8 +78,9 @@ a skill yourself** — that's a user decision surfaced via `/skill-report`.
 1. **Preflight.** Read `~/.claude/learning/data/promotion_queue.jsonl`.
    If empty, print `we-forge: queue empty` and stop (zero-spend exit).
 2. **Consult memory.** `Agent(memory-manager, {"mode":"load"})`; keep its
-   returned `blocklist` / `primitive_re` / `ecc_seen` / `tick_counter` / `hwm`
-   for this tick. Print `we-forge: memory loaded — blocklist=<b> primitive=<p> ecc_seen=<e>`.
+   returned `blocklist` / `primitive_re` / `ecc_seen` / `ecc_recs` / `tick_counter` /
+   `hwm` for this tick. Build a `ecc_recs_by_slug` map from `ecc_recs`. Print
+   `we-forge: memory loaded — blocklist=<b> primitive=<p> ecc_recs=<r>`.
 3. **Reduce.** Dispatch `pattern-detector` once (read-only, fast) with
    the queue path. Parse its JSON candidate array.
 4. **Filter against memory.** Drop candidates whose slug is on the
@@ -88,20 +91,39 @@ a skill yourself** — that's a user decision surfaced via `/skill-report`.
    If the remaining list is longer, take top `N` by `total_count` and
    leave the rest for the next tick. Print
    `we-forge: capped candidates=<N> deferred=<M>` when capping occurs.
-6. **ECC-match diversion.** Scan each candidate's `rationale` /
-   `best_match_*` fields for marketplace match hints emitted by
-   `pattern-detector` (e.g. `best_match_score >= 3` against a `marketplace`
-   skill). For each:
-   - **Do NOT dispatch skill-synthesizer.** The user already has this
-     skill installed via the ECC marketplace; building a duplicate would
-     fragment skill discovery and contradict we-forge's purpose
-     (maximizing ECC utilization).
-   - Stage an `ecc_recs[]` entry — `{slug, ecc_skill, count, first_seen}` —
-     for the `memory-manager` `record` call (step 9). Do **not** write
+6. **ECC-match diversion.** A candidate is an `ECC_MATCH` (→ no synthesis) if
+   **either**:
+
+   - **(6a) Known match — authoritative.** Its slug is in `ecc_recs_by_slug`
+     (loaded at step 2). This wins outright: once a slug has been matched to an
+     ECC marketplace skill on any prior tick it stays matched, regardless of
+     what `pattern-detector` scored this time. This exists because the scored
+     matcher under-counts short single-token slugs (`tmux`, `codex`, …) whose
+     only signal is an ECC-description keyword hit (+2, below the drop
+     threshold 3) — without this rule those would leak into synthesis and
+     duplicate marketplace coverage. Use the recorded `ecc_skill`; bump its
+     `count` by the candidate's `total_count`.
+     *(Edge case: if the recorded `ecc_skill` is not in this tick's
+     `skill-index.jsonl` — the marketplace skill was removed — do not force the
+     match; fall through to 6b / normal handling and let `memory-manager` drop
+     the stale `ecc_recs` entry on the next `record`. TODO: have `memory-manager`
+     prune `ecc_recs` against `skill-index.jsonl`.)*
+   - **(6b) Fresh match — from pattern-detector.** Its `best_match_score >= 3`
+     against a `marketplace`-source skill (or the legacy `rationale` hint says
+     "matches ECC marketplace skill: …"). Use `best_match_skill`.
+
+   For each ECC_MATCH candidate:
+   - **Do NOT dispatch skill-synthesizer.** The user already has this skill via
+     the ECC marketplace; a duplicate fragments skill discovery and contradicts
+     we-forge's purpose (maximizing ECC utilization).
+   - Stage an `ecc_recs[]` entry — `{slug, ecc_skill, count, first_seen}` (carry
+     forward `first_seen` if the slug was already in `ecc_recs_by_slug`, else use
+     today) — for the `memory-manager` `record` call (step 9). Do **not** write
      the memory files yourself (`memory-manager` owns them).
    - Verdict = `ECC_MATCH`. Log decision in the ledger (step 9), update queue
      (step 10), include in the notifier payload (step 11).
-   - Print `we-forge: <slug> → ECC_MATCH (/everything-claude-code:<name>)`.
+   - Print `we-forge: <slug> → ECC_MATCH (/everything-claude-code:<name>)` —
+     suffix ` [known]` for 6a, ` [score=<n>]` for 6b.
 7. **DROP short-circuit (zero-spend).** For each remaining candidate,
    check the **3 DROP triggers** in order:
    1. **Primitive blocklist match.** If the slug matches any regex in

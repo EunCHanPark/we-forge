@@ -32,12 +32,13 @@ Invocation prompt: `{"mode":"load"}`.
 2. Parse `pointers.md`'s JSON block and return **exactly this JSON** on stdout
    (nothing else):
    ```json
-   {"blocklist":["slug-a"],"primitive_re":["^bash-(grep|cat)-"],"ecc_seen":["dmux-workflows"],"tick_counter":154,"hwm":"2026-05-12T03:00:13Z"}
+   {"blocklist":["slug-a"],"primitive_re":["^bash-(grep|cat)-"],"ecc_seen":["dmux-workflows"],"ecc_recs":[{"slug":"tmux","ecc_skill":"dmux-workflows","count":9,"first_seen":"2026-04-23"}],"tick_counter":154,"hwm":"2026-05-12T03:00:13Z"}
    ```
-   (Drop `ecc_recs` and `dead_skill_candidates` from the returned object — the
-   orchestrator doesn't need them at load time. If `pointers.md` is malformed,
-   return all-empty/zero values and additionally print
-   `memory-manager: pointers.md malformed — returned empty lookups` to stderr.)
+   - `ecc_recs` is the authoritative slug→ECC-skill map (the orchestrator uses it
+     at step 6 to ECC_MATCH already-known slugs without re-running pattern-detector).
+   - Drop only `dead_skill_candidates` from the returned object (not needed at load).
+   - If `pointers.md` is malformed, return all-empty/zero values and additionally
+     print `memory-manager: pointers.md malformed — returned empty lookups` to stderr.
 
 ## Mode: `record`
 
