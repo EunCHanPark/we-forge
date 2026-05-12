@@ -345,12 +345,18 @@ entries preserved, original backed up to `settings.json.bak.<ISO>`).
   `ecc_recs`, tick counter, high-water mark). `memory-manager` is its sole
   writer (atomic per-file writes, size-capped, with rollup).
 - **Pre-built dedupe index.** pattern-detector reads `skill-index.jsonl`
-  (one file, ~hundreds of lines, all four skill/instinct sources, rebuilt
-  every 24h) instead of globbing ~1000 SKILL.md per tick.
-- **`ecc_recs` is authoritative.** Once a slug has been matched to an ECC
-  marketplace skill it stays an ECC_MATCH regardless of later detector
-  scoring — covers short single-token slugs (`tmux`, `codex`, …) the scored
-  matcher under-counts.
+  (one file, ~hundreds of lines, all four skill/instinct sources, **canonical
+  English `SKILL.md` only** — localized `docs/` and IDE `.cursor`/`.kiro`/
+  `.agents` copies are skipped — rebuilt every 24h) instead of globbing ~1000
+  SKILL.md per tick.
+- **ECC-match defense, three layers.** (1) pattern-detector scores a bare
+  command-name slug whose token appears in a published skill's name/desc at +5
+  → caught on first sight (fixes the scored matcher under-counting single-token
+  slugs like `tmux`/`codex`); (2) `ecc_recs` in `pointers.md` is a "once
+  matched, stays matched" backstop, with stale entries auto-pruned when the
+  marketplace skill disappears; (3) `memory-manager`'s `record` is an additive
+  merge — it never drops an `ecc_recs` entry just because a tick's payload
+  didn't mention it.
 - **Hardened audit gate.** quality-auditor self-tests `redact.sh` before any
   rubric check (a broken filter holds drafts, never auto-PASSes them) and adds
   a semantic-intent rubric that REJECTs network-execution / persistence /

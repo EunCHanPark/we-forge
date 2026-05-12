@@ -86,6 +86,15 @@ All notable changes to we-forge are documented in this file. Format follows
   IDE copies) — fixed ~100/207 `skill-index.jsonl` entries that had picked up a
   Chinese/Japanese/Korean description (killing keyword-overlap dedup for them);
   `ecc-index.json` skill_count 483 → 208 (deduped).
+- `memory-manager` `record` is now explicitly an **additive merge** of the
+  existing `pointers.md`, never a replace from the `record` payload: incoming
+  `ecc_recs[]` updates counts / appends, but never deletes an entry absent this
+  tick; stale-prune is the only removal path and only on a clean
+  `skill-index.jsonl` read; `dead_skill_candidates` (and every other key) is
+  always kept present (default `[]`). Fixes a verification-tick regression where
+  a partial `record` payload dropped `codex` from `ecc_recs` and deleted the
+  `dead_skill_candidates` key. Verified live: a tick whose payload omitted
+  `codex` left it intact and kept all 7 keys.
 
 ---
 
