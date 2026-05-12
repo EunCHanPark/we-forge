@@ -168,6 +168,13 @@ we-forgectl install --enable-telegram # opt-in Telegram bot (daemon mode)
 we-forgectl uninstall                 # safety-backup → remove
 ```
 
+> **Upgrading a pre-Rust install?** Older installs registered the service to run
+> `python3 we-forgectl daemon`; the binary build can't be run that way, so the
+> daemon shows `stopped` (`daemon.log` fills with `SyntaxError: Non-UTF-8 code`).
+> Re-run `we-forgectl install --enable-telegram` (or `we-forgectl install --daemon`)
+> — the installer regenerates the launchd/systemd/Task-Scheduler definition to
+> invoke the binary directly. See EP-PARITY-002 / DOCS-KO §7-7.
+
 ---
 
 ## Use inside Claude Code

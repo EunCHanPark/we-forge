@@ -599,6 +599,35 @@ echo "<canonical-pattern>" >> ~/.claude/learning/data/rejected.txt
 
 rubric #6 이 차단 못한 케이스면 `agents/quality-auditor.md` 의 의심 패턴 리스트에 추가하는 PR 환영.
 
+### 7-7. 데몬이 `stopped` — Rust 바이너리 업그레이드 후 plist 가 python3 호출 (EP-PARITY-002)
+
+증상:
+```bash
+we-forgectl status
+#   status:   stopped         ← daemon 모드인데 안 돎
+
+tail -n 20 ~/Library/Logs/we-forge/daemon.log
+#   SyntaxError: Non-UTF-8 code starting with '\xcf' in file .../we-forgectl ...
+#   (launchd 가 throttle-retry 하면서 반복 출력)
+```
+
+원인: `we-forgectl` 가 Python 스크립트 → 컴파일된 Rust 바이너리(v0.4.7)로 교체됐는데, **기존에 설치된 launchd plist 는 여전히 `python3 we-forgectl daemon` 을 호출**합니다. `python3` 가 Mach-O 바이너리를 파싱하려다 SyntaxError → 데몬이 죽은 채로 남음. (구버전 plist 의 `ProgramArguments` = `["/usr/bin/env", "python3", ".../we-forgectl", "daemon"]`.)
+
+해결:
+```bash
+# Rust 인스톨러가 plist 를 올바르게 재생성 (ProgramArguments = [".../we-forgectl", "daemon"])
+we-forgectl install --enable-telegram     # telegram 쓰는 경우
+# 또는
+we-forgectl install --daemon              # telegram 안 쓰는 경우
+
+we-forgectl status   # status: running 확인
+ps aux | grep "we-forgectl daemon" | grep -v grep   # python3 래퍼 없이 바이너리 직접 실행돼야 함
+```
+
+> 주의: `we-forgectl install` 은 `config.json` 의 `telegram_enabled` 를 `--enable-telegram` 플래그 값으로 덮어씁니다. 텔레그램을 쓰고 있었다면 반드시 `--enable-telegram` 을 붙이세요 (token/chat_id 는 config 에 남아 있어 그대로 재사용됨).
+
+Linux(systemd `ExecStart=`) / Windows(Task Scheduler 액션)도 같은 위험이 있습니다 — 동일하게 재설치하세요. (install.sh / install.ps1 가 업그레이드 시 자동 감지·재생성하도록 하는 작업은 EP-PARITY-002 에서 추적 중.)
+
 ---
 
 ## 9. 제거 (Uninstall)

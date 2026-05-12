@@ -6,6 +6,26 @@ All notable changes to we-forge are documented in this file. Format follows
 
 ## [Unreleased]
 
+**Date**: 2026-05-12 | EP-PARITY-002
+
+### Fixes
+
+- **Service-manager re-install on Rust-binary upgrade** (EP-PARITY-002) — after
+  `we-forgectl` was swapped from a Python script to a compiled Rust binary (v0.4.7,
+  EP-PARITY-001), existing installs' launchd plist still invoked
+  `["/usr/bin/env", "python3", "<…>/we-forgectl", "daemon"]` → `python3 <Mach-O binary>`
+  raises `SyntaxError: Non-UTF-8 code …` → the daemon stays dead while launchd
+  throttle-retries (`we-forgectl status` shows `stopped`; `daemon.log` fills with the
+  SyntaxError). **Hotfix:** re-run `we-forgectl install --enable-telegram` (or
+  `--daemon`) — the Rust installer regenerates the plist with
+  `ProgramArguments=["<…>/we-forgectl", "daemon"]` (no interpreter prefix) and
+  re-bootstraps the job. **Pending (tracked in EP-PARITY-002):** `install.sh` /
+  `install.ps1` should detect a stale interpreter-prefixed service definition and
+  always regenerate it on upgrade; the systemd unit (`ExecStart=`) and Windows Task
+  Scheduler action need the same guard.
+
+---
+
 **Date**: 2026-04-26 | **Commits**: 15 EPs | **Pattern-learning integrations**: Major
 
 ### New Commands
