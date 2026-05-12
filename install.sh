@@ -182,7 +182,7 @@ _copy "$REPO_DIR/dashboard/dashboard.py"         "$CLAUDE_HOME/dashboard/dashboa
 _copy "$REPO_DIR/hooks/stop-telemetry.sh"      "$CLAUDE_HOME/hooks/stop-telemetry.sh"
 _copy "$REPO_DIR/hooks/sessionstart-we-forge.sh" "$CLAUDE_HOME/hooks/sessionstart-we-forge.sh"
 
-for a in monitor-sentinel pattern-detector skill-synthesizer quality-auditor we-forge; do
+for a in monitor-sentinel pattern-detector skill-synthesizer quality-auditor notifier memory-manager we-forge; do
   _copy "$REPO_DIR/agents/$a.md" "$CLAUDE_HOME/agents/$a.md"
 done
 
