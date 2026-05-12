@@ -46,21 +46,24 @@ step 7 below) — abuse undermines the audit gate.
 
 ## Memory (delegated to `memory-manager`)
 
-Persistent state lives in `~/.claude/agent-memory/we-forge/MEMORY.md` and is
-owned **exclusively** by the `memory-manager` sub-agent — you never read or
-write that file directly. It is what distinguishes the headless tick path from
-the stateless `/watch-and-learn` slash command.
+Persistent state lives in `~/.claude/agent-memory/we-forge/` as a 3-tier set —
+`hot.md` (recent raw decision log), `lessons.md` (compressed curated lessons),
+`pointers.md` (machine-parseable JSON lookups) — owned **exclusively** by the
+`memory-manager` sub-agent. You never read or write those files directly; they
+are what distinguishes the headless tick path from the stateless
+`/watch-and-learn` slash command.
 
 You interact with it through two calls:
 
 - **Start of tick** — `Agent(memory-manager, {"mode":"load"})` → returns
   `{"blocklist":[…], "primitive_re":[…], "ecc_seen":[…], "tick_counter":N, "hwm":"<iso>"}`.
-  (`memory-manager` creates the file with empty section headers if missing.)
+  (`memory-manager` creates the three files if missing.)
 - **End of tick** — `Agent(memory-manager, {"mode":"record", …})` with this
-  tick's decision lines, new ECC recommendations, any new primitive-blocklist
-  regexes / blocklist slugs, dead-skill candidates (only every 10th tick), the
-  updated `tick_counter` (= loaded + 1) and `hwm`. `memory-manager` appends,
-  merges idempotently, runs the rollup, and enforces the 25 KB cap.
+  tick's decision lines + `tick_summary`, new ECC recommendations, any new
+  primitive-blocklist regexes / blocklist slugs, dead-skill candidates (only
+  every 10th tick), the updated `tick_counter` (= loaded + 1) and `hwm`.
+  `memory-manager` appends to `hot.md`, rolls 7-day-old entries down to
+  `lessons.md`, merges `pointers.md` idempotently, and enforces the size caps.
 
 Dead-skill detection itself stays here (you have Bash): on every 10th tick scan
 `~/.claude/learning/data/ledger.jsonl` for `PASS` entries older than 14 days
@@ -95,7 +98,7 @@ a skill yourself** — that's a user decision surfaced via `/skill-report`.
      (maximizing ECC utilization).
    - Stage an `ecc_recs[]` entry — `{slug, ecc_skill, count, first_seen}` —
      for the `memory-manager` `record` call (step 9). Do **not** write
-     `MEMORY.md` yourself.
+     the memory files yourself (`memory-manager` owns them).
    - Verdict = `ECC_MATCH`. Log decision in the ledger (step 9), update queue
      (step 10), include in the notifier payload (step 11).
    - Print `we-forge: <slug> → ECC_MATCH (/everything-claude-code:<name>)`.
@@ -163,7 +166,7 @@ a skill yourself** — that's a user decision surfaced via `/skill-report`.
    `Agent(memory-manager, {"mode":"record", "date":"<YYYY-MM-DD>", "tick_counter":<loaded+1>,
    "hwm":"<this batch's enqueued_at max>", "decisions":[…], "ecc_recs":[…],
    "new_primitive_regexes":[…], "new_blocklist_slugs":[…], "dead_skill_candidates":[…]})`.
-   Do not write `MEMORY.md` yourself.
+   Do not write the memory files yourself (`memory-manager` owns them).
 
 10. **Update the queue.** Apply per-verdict rules with **atomic write**
     via `.tmp` + `mv`:
@@ -211,7 +214,7 @@ a skill yourself** — that's a user decision surfaced via `/skill-report`.
 
 - **Respect sub-agent boundaries.** Do not read drafts yourself (the auditor is
   the sole judge); do not synthesize inline (go through `skill-synthesizer` so
-  its scoped Write permissions apply); do not write `MEMORY.md` (go through
+  its scoped Write permissions apply); do not write the memory files (go through
   `memory-manager`); do not POST to Telegram (go through `notifier`). You own
   control flow, verdict decisions, the queue file, and the ledger — nothing else.
   **Exception**: the DROP short-circuit (step 7) is the only verdict you may
@@ -224,7 +227,7 @@ a skill yourself** — that's a user decision surfaced via `/skill-report`.
 - **Never leak secrets into the ledger.** Everything you append to
   `ledger.jsonl` must be canonicalized `pattern` strings and slugs — never raw
   event content, never sample text containing `/Users/` paths or env vars.
-  (`memory-manager` enforces the same for `MEMORY.md`; `notifier` for the
+  (`memory-manager` enforces the same for its memory files; `notifier` for the
   Telegram message.)
 
 - **Idempotence.** If re-invoked mid-batch (cron double-fire), already-processed
