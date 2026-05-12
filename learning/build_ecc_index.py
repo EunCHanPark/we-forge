@@ -94,6 +94,18 @@ def _parse_frontmatter(text: str) -> dict:
     return out
 
 
+# Marketplace checkouts ship the same SKILL.md many times: localized doc copies
+# (docs/zh-CN/, docs/ja-JP/, …) and IDE-specific copies (.agents/, .cursor/, .kiro/).
+# Index only the canonical English copy — a path with any of these segments above
+# the skill dir is a non-canonical duplicate (otherwise a heavily-localized popular
+# skill is over-counted and its IDF is skewed).
+_NONCANONICAL_SEGMENTS = {"docs", ".agents", ".cursor", ".kiro", "examples"}
+
+
+def _is_noncanonical(path: Path) -> bool:
+    return any(seg in _NONCANONICAL_SEGMENTS for seg in path.parts)
+
+
 def _index_skill_md(path: Path, source: str) -> dict | None:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -144,31 +156,35 @@ def main(argv: list[str]) -> int:
     out_path = we_forge_home / "ecc-index.json"
 
     skills: list[dict] = []
+    seen: set[tuple[str, str]] = set()  # (source, slug) — drop duplicate paths
+
+    def _add(entry: dict | None) -> None:
+        if not entry:
+            return
+        key = (entry.get("source", ""), entry.get("slug", ""))
+        if not key[1] or key in seen:
+            return
+        seen.add(key)
+        skills.append(entry)
 
     marketplaces = home / ".claude" / "plugins" / "marketplaces"
     if marketplaces.exists():
         for p in marketplaces.rglob("SKILL.md"):
-            entry = _index_skill_md(p, "marketplace")
-            if entry:
-                skills.append(entry)
+            if _is_noncanonical(p):
+                continue
+            _add(_index_skill_md(p, "marketplace"))
 
     learned = home / ".claude" / "skills" / "learned"
     if learned.exists():
         for p in learned.glob("*/SKILL.md"):
-            entry = _index_skill_md(p, "learned")
-            if entry:
-                skills.append(entry)
+            _add(_index_skill_md(p, "learned"))
 
     homunc = home / ".claude" / "homunculus"
     if homunc.exists():
         for p in homunc.rglob("evolved/skills/*/SKILL.md"):
-            entry = _index_skill_md(p, "evolved")
-            if entry:
-                skills.append(entry)
+            _add(_index_skill_md(p, "evolved"))
         for p in homunc.rglob("instincts/personal/*.yaml"):
-            entry = _index_instinct_yaml(p)
-            if entry:
-                skills.append(entry)
+            _add(_index_instinct_yaml(p))
 
     payload = {
         "built_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

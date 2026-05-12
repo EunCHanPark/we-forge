@@ -56,6 +56,15 @@ def read(path):
     except OSError:
         return None
 
+# Marketplace checkouts ship the same SKILL.md many times: localized doc copies
+# (docs/zh-CN/, docs/ja-JP/, …) and IDE-specific copies (.agents/, .cursor/, .kiro/).
+# Index ONLY the canonical English one — a path with any of these segments above
+# the skill dir is a non-canonical copy (and would otherwise win the slug-dedupe
+# race ~half the time, leaving a Chinese/Japanese description in the index).
+NONCANONICAL_SEGMENTS = {"docs", ".agents", ".cursor", ".kiro", "examples"}
+def is_noncanonical(path):
+    return any(seg in NONCANONICAL_SEGMENTS for seg in path.split(os.sep))
+
 rows = []
 seen = set()  # (source, slug) — dedupe within the index itself
 
@@ -78,8 +87,11 @@ for p in glob.glob(os.path.join(claude_home, "skills/learned/*/SKILL.md")):
     fm = frontmatter(t)
     add("learned", getval(fm, "name") or slug, getval(fm, "name") or slug, getval(fm, "description"))
 
-# 2. ECC marketplace (the big one) — skip the plugins/cache mirror to avoid double-count
+# 2. ECC marketplace (the big one) — canonical English copies only; skip the
+#    plugins/cache mirror (double-count) and localized/IDE copies (see above).
 for p in glob.glob(os.path.join(claude_home, "plugins/marketplaces/**/SKILL.md"), recursive=True):
+    if is_noncanonical(p):
+        continue
     slug = os.path.basename(os.path.dirname(p))
     t = read(p)
     if t is None:
