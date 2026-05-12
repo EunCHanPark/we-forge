@@ -67,22 +67,34 @@ Steps (build all file contents in memory, then write each once):
    `<!-- ROLLUP <oldest>..<newest>: <n> entries, <p> PASS / <e> ECC_MATCH / <d> DROP -->`
    line appended to `lessons.md`'s `## Archived Orchestration Log` section
    (preserve any REJECT lines verbatim — still relevant to the blocklist).
-3. **Update `pointers.md`:**
-   - merge `ecc_recs[]` (update `count` in place if slug already listed; else append),
-   - **prune stale `ecc_recs`** — read
-     `~/.claude/agent-memory/we-forge/skill-index.jsonl` (you have Read; skip if
-     missing/malformed) and collect the set of skill `name`s in it; drop any
-     `ecc_recs` entry whose `ecc_skill` is **not** in that set (the marketplace
-     skill it pointed at was removed — keeping it would make the orchestrator
-     ECC_MATCH a slug to a skill the user no longer has). Note each pruned slug
-     in the printed summary (`pruned_stale_ecc_recs=[…]`).
-   - add `new_primitive_regexes[]` to `primitive_re` (skip duplicates),
-   - add `new_blocklist_slugs[]` to `blocklist` (skip duplicates),
+3. **Update `pointers.md`** — start from the **existing** JSON in `pointers.md`
+   (read it first; this is a *merge*, never a replace from the `record` payload).
+   Then, in order:
+   - **Merge `ecc_recs[]` (additive, never destructive).** For each entry in the
+     `record` payload's `ecc_recs[]`: if its `slug` is already in the existing
+     `ecc_recs`, update that entry's `count` (and `ecc_skill` if it changed);
+     otherwise append it. **Do not delete any existing `ecc_recs` entry just
+     because it's absent from this tick's payload** — most ticks only touch a few
+     slugs, and a slug not seen this tick is still a valid past match.
+   - **Prune stale `ecc_recs`** — *only* this: read
+     `~/.claude/agent-memory/we-forge/skill-index.jsonl` (you have Read; if it's
+     missing or malformed, **skip pruning entirely** — never prune on a failed
+     read), collect the set of skill `name`s in it, and drop any `ecc_recs` entry
+     whose `ecc_skill` is **not** in that set (the marketplace skill it pointed at
+     was removed). Note each pruned slug in the printed summary
+     (`pruned_stale_ecc_recs=[…]`); print `pruned_stale_ecc_recs=[]` when none.
+   - add `new_primitive_regexes[]` to `primitive_re` (append; skip duplicates),
+   - add `new_blocklist_slugs[]` to `blocklist` (append; skip duplicates),
    - rebuild `ecc_seen` = sorted unique `ecc_skill` values from the (post-prune) `ecc_recs`,
    - set `tick_counter`, `hwm`,
-   - replace `dead_skill_candidates` with the supplied array **only if non-empty**
-     (the orchestrator sends it just every 10th tick; leave it otherwise).
-   Write the whole JSON back inside the ```json``` fence.
+   - `dead_skill_candidates`: **always keep the key present** (default `[]`).
+     Replace its value with the payload's array **only if that array is non-empty**
+     (the orchestrator sends it just every 10th tick); otherwise leave the existing
+     value (or `[]` if absent). Never delete the key.
+   Write the whole JSON back inside the ```json``` fence. The written JSON must
+   always contain all seven keys: `blocklist`, `primitive_re`, `ecc_seen`,
+   `ecc_recs`, `tick_counter`, `hwm`, `dead_skill_candidates` (plus the optional
+   `_meta` block if present) — even when a value is an empty list.
 4. **Enforce caps.** If `hot.md` > 10 KB after step 2, roll the oldest entries
    to `lessons.md` regardless of age until it fits. If `lessons.md` > 5 KB,
    compress its `## Archived Orchestration Log` block to a single
