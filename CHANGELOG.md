@@ -76,11 +76,16 @@ All notable changes to we-forge are documented in this file. Format follows
 - `install.sh` deploys `notifier.md` + `memory-manager.md` + `build-skill-index.sh`
   + `migrate-memory.sh`; seeds `skill-index.jsonl` and runs `migrate-memory.sh`
   at install time; `mkdir`s `agent-memory/we-forge`.
-- Known follow-up: the scored pattern-detector under-counts short single-token
-  slugs (mitigated above by `ecc_recs`-authoritative ECC_MATCH); a cleaner fix
-  would special-case "single-token slug whose token appears in an ECC skill
-  name/description" at the detector. `memory-manager` should also prune
-  `ecc_recs` entries whose `ecc_skill` no longer exists in `skill-index.jsonl`.
+- Follow-ups (now done): pattern-detector scores a bare command-name slug
+  (`^[a-z][a-z0-9]*$`) whose token appears as a whole word in a published
+  skill's name/desc at +5 (immediate drop) — caught on first sight, not just
+  via the `ecc_recs` backstop. `memory-manager` prunes `ecc_recs` entries whose
+  `ecc_skill` is no longer in `skill-index.jsonl` (self-heals when a marketplace
+  skill is removed). And both index builders now index only the canonical
+  English `SKILL.md` (skipping `docs/`/`.cursor/`/`.kiro/`/`.agents/` localized +
+  IDE copies) — fixed ~100/207 `skill-index.jsonl` entries that had picked up a
+  Chinese/Japanese/Korean description (killing keyword-overlap dedup for them);
+  `ecc-index.json` skill_count 483 → 208 (deduped).
 
 ---
 

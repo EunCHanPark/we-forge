@@ -69,9 +69,16 @@ Steps (build all file contents in memory, then write each once):
    (preserve any REJECT lines verbatim — still relevant to the blocklist).
 3. **Update `pointers.md`:**
    - merge `ecc_recs[]` (update `count` in place if slug already listed; else append),
+   - **prune stale `ecc_recs`** — read
+     `~/.claude/agent-memory/we-forge/skill-index.jsonl` (you have Read; skip if
+     missing/malformed) and collect the set of skill `name`s in it; drop any
+     `ecc_recs` entry whose `ecc_skill` is **not** in that set (the marketplace
+     skill it pointed at was removed — keeping it would make the orchestrator
+     ECC_MATCH a slug to a skill the user no longer has). Note each pruned slug
+     in the printed summary (`pruned_stale_ecc_recs=[…]`).
    - add `new_primitive_regexes[]` to `primitive_re` (skip duplicates),
    - add `new_blocklist_slugs[]` to `blocklist` (skip duplicates),
-   - rebuild `ecc_seen` = sorted unique `ecc_skill` values from `ecc_recs`,
+   - rebuild `ecc_seen` = sorted unique `ecc_skill` values from the (post-prune) `ecc_recs`,
    - set `tick_counter`, `hwm`,
    - replace `dead_skill_candidates` with the supplied array **only if non-empty**
      (the orchestrator sends it just every 10th tick; leave it otherwise).

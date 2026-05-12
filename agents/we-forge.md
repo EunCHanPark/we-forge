@@ -97,20 +97,21 @@ a skill yourself** — that's a user decision surfaced via `/skill-report`.
    - **(6a) Known match — authoritative.** Its slug is in `ecc_recs_by_slug`
      (loaded at step 2). This wins outright: once a slug has been matched to an
      ECC marketplace skill on any prior tick it stays matched, regardless of
-     what `pattern-detector` scored this time. This exists because the scored
-     matcher under-counts short single-token slugs (`tmux`, `codex`, …) whose
-     only signal is an ECC-description keyword hit (+2, below the drop
-     threshold 3) — without this rule those would leak into synthesis and
-     duplicate marketplace coverage. Use the recorded `ecc_skill`; bump its
-     `count` by the candidate's `total_count`.
+     what `pattern-detector` scored this time — a backstop for `pattern-detector`
+     under-counting short single-token slugs (though `pattern-detector` now also
+     has its own single-token-command rule, so fresh ones should be caught at
+     6b). Use the recorded `ecc_skill`; bump its `count` by `total_count`.
      *(Edge case: if the recorded `ecc_skill` is not in this tick's
      `skill-index.jsonl` — the marketplace skill was removed — do not force the
-     match; fall through to 6b / normal handling and let `memory-manager` drop
-     the stale `ecc_recs` entry on the next `record`. TODO: have `memory-manager`
-     prune `ecc_recs` against `skill-index.jsonl`.)*
+     match; fall through to 6b / normal handling. `memory-manager` prunes such
+     stale `ecc_recs` entries automatically on the next `record` call, so this
+     self-heals over one tick.)*
    - **(6b) Fresh match — from pattern-detector.** Its `best_match_score >= 3`
      against a `marketplace`-source skill (or the legacy `rationale` hint says
-     "matches ECC marketplace skill: …"). Use `best_match_skill`.
+     "matches ECC marketplace skill: …"). Use `best_match_skill`. (With
+     `pattern-detector`'s single-token-command rule, bare command slugs whose
+     name appears in a marketplace skill score +5 here → caught on first sight,
+     without needing the 6a backstop.)
 
    For each ECC_MATCH candidate:
    - **Do NOT dispatch skill-synthesizer.** The user already has this skill via

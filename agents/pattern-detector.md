@@ -75,6 +75,18 @@ marketplaces tree and would double-count.
 2. **Drop candidates** that overlap **any** existing skill/instinct from the
    four sources above. Use this **scored matching** (drop if total ≥ 3):
    - **slug exact match** (existing dir/instinct id == candidate slug) → +5 (immediate drop)
+   - **single-token command name in an existing skill** — if the candidate slug
+     is a bare command name (matches `^[a-z][a-z0-9]*$` — one token, no `-`/`_`,
+     no placeholders; e.g. `tmux`, `git`, `make`, `codex`, `vim`, `rg`) **and**
+     that exact token appears as a whole word (word-boundary, case-insensitive)
+     in an existing skill's `name` → +5 (immediate drop); in its `desc_head`
+     only → +5 as well **if** that skill's source is `marketplace` / `instinct`
+     / `evolved` (a published skill that names the command in its description
+     covers it — far better to recommend it than to synthesize a duplicate),
+     else +2. This rule exists because the per-token signals below structurally
+     under-count single-token slugs (no 2nd token for overlap, no 2-token
+     command-head), so `tmux` vs `dmux-workflows` would otherwise score only +2
+     (desc keyword) and leak into synthesis.
    - **slug token overlap** (≥ 50% of candidate slug tokens appear in
      existing slug; tokens = split on `-`/`_`, ignore tokens < 3 chars) → +2
    - **description keyword overlap** (≥ 2 content words from candidate
@@ -90,7 +102,8 @@ marketplaces tree and would double-count.
    In the 3-4 ambiguous band, prefer dropping when the match comes from
    sources 2 or 3 (ECC marketplace / instincts) — those represent
    battle-tested coverage. Single-signal substring matches (score 2) alone
-   are NOT sufficient.
+   are NOT sufficient (the single-token rule above is the *only* one-signal
+   exception, and only for bona-fide command names against published skills).
 
    When dropping for an ECC marketplace match, include the matching skill
    name in the `rationale` of any *other* surviving candidate's JSON so the
