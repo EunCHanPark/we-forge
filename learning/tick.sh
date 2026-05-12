@@ -16,7 +16,10 @@
 #   CLAUDE_HOME           default: $HOME/.claude
 #   CLAUDE_LEARNING_DATA  default: $CLAUDE_HOME/learning/data
 #   CLAUDE_DRY_RUN=1      skip the claude -p invocation (for tests)
-#   CLAUDE_TICK_TIMEOUT   default: 600 (seconds) for the claude invocation
+#   CLAUDE_TICK_TIMEOUT   default: 900 (seconds) for the claude invocation
+#                         (raised from 600: the orchestrator now makes extra
+#                          sub-agent round-trips — memory-manager load+record,
+#                          notifier — which pushed slow ticks near the old cap)
 #
 # Exits 0 on success or benign no-ops; non-zero only on lock-file errors.
 
@@ -52,7 +55,7 @@ STATE="$DATA_DIR/state.json"
 LOCK="$DATA_DIR/.tick.lock"
 LOG="$DATA_DIR/tick.log"
 
-TIMEOUT="${CLAUDE_TICK_TIMEOUT:-600}"
+TIMEOUT="${CLAUDE_TICK_TIMEOUT:-900}"
 MAX_EVENTS_BYTES="${CLAUDE_MAX_EVENTS_BYTES:-52428800}" # 50 MiB
 
 mkdir -p "$DATA_DIR" 2>/dev/null || true

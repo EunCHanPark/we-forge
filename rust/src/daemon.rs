@@ -7,7 +7,7 @@
 //!
 //! Design notes:
 //!   - tokio::select! runs tick interval + telegram polling in parallel,
-//!     so a long tick (claude --agent up to 10min) never blocks the bot
+//!     so a long tick (claude --agent up to ~15min, CLAUDE_TICK_TIMEOUT) never blocks the bot
 //!   - tick spawned via tokio::process::Command (non-blocking)
 //!   - println! works for daemon.log because launchd redirects stdout to
 //!     a file with line-buffering when stdout is detected as non-tty
