@@ -6,6 +6,84 @@ All notable changes to we-forge are documented in this file. Format follows
 
 ## [Unreleased]
 
+**Date**: 2026-05-12 | learning-loop hardening + orchestrator decomposition (P0/P1 work order)
+
+### New agents
+
+- **`notifier`** (Bash only) — owns the Telegram step. Reads `telegram_*` from
+  `~/.we-forge/config.json` itself (token never enters the agent transcript);
+  no-op when Telegram is disabled or the tick had no PASS/ECC_MATCH; never
+  claims success on a failed `curl`.
+- **`memory-manager`** (Read/Write only) — sole writer of the agent memory
+  files. `load` mode returns `{blocklist, primitive_re, ecc_seen, ecc_recs,
+  tick_counter, hwm}`; `record` mode appends decisions, rolls 7-day-old entries
+  hot→lessons, merges `pointers.md` idempotently, enforces the size caps.
+
+### New scripts
+
+- **`learning/build-skill-index.sh`** — pre-builds
+  `~/.claude/agent-memory/we-forge/skill-index.jsonl` (one JSONL line per
+  skill across all four dedupe sources: `learned` / `marketplace` / `instinct`
+  / `evolved`, plus a `_meta` header). `tick.sh` rebuilds it when >24h old.
+  pattern-detector now reads this one file instead of globbing ~1000 SKILL.md
+  per tick (falls back to the four-glob scan only if the index is stale/missing).
+- **`learning/migrate-memory.sh`** — one-time split of a legacy single-file
+  `MEMORY.md` into the 3-tier layout (backs up + renames to `MEMORY.md.legacy`,
+  no-op if already migrated / fresh install). `install.sh` runs it on upgrade.
+
+### Improvements
+
+- **Orchestrator decomposition (P1-1).** `we-forge.md` was a god-agent
+  (memory rollup, queue mutation, ECC routing, Telegram, ledger, dead-skill
+  scan, blocklist, budgeting). It now delegates persistent memory →
+  `memory-manager`, draft writing → `skill-synthesizer`, gating →
+  `quality-auditor`, the Telegram ping → `notifier`; it owns only control flow,
+  verdict decisions, the queue file, and the ledger. (`queue-manager` /
+  `ecc-router` deferred for a later pass.)
+- **3-tier agent memory (P1-2).** `~/.claude/agent-memory/we-forge/MEMORY.md`
+  → `hot.md` (recent raw decision log, rolling ~7d, ≤10 KB) / `lessons.md`
+  (compressed durable lessons + a frozen pre-migration archive, ≤5 KB) /
+  `pointers.md` (machine-parseable JSON: `blocklist` / `primitive_re` /
+  `ecc_seen` / `ecc_recs` / `tick_counter` / `hwm` / `dead_skill_candidates`).
+- **`ecc_recs` is authoritative for ECC_MATCH (option 3).** Step 6 of the
+  orchestrator ECC_MATCHes a candidate if **either** its slug is already in
+  `ecc_recs` (loaded from `pointers.md` — "once matched, stays matched";
+  covers short single-token slugs like `tmux`/`codex` that the scored
+  pattern-detector under-counts at +2, below the drop threshold 3) **or**
+  pattern-detector freshly scored it ≥3 against a marketplace skill.
+- **`CLAUDE_TICK_TIMEOUT` 600 → 900 s** — the extra sub-agent round-trips
+  (memory-manager load + record, notifier) pushed slow ticks near the old cap.
+
+### Security
+
+- **Auditor `redact.sh` self-test preflight (P0-1).** quality-auditor runs
+  `redact.sh --self-test` before any rubric check; on failure the draft is held
+  (verdict `REVISE`, `reason:redact_preflight_failed`, `revise_count` not
+  bumped — it's an environment fault), never `PASS`. Closes the single point of
+  failure on the residual-secret rubric. Documents redact.sh's 0=KEEP / 1=DROP
+  exit semantics so the check isn't inverted.
+- **Auditor semantic-intent check — rubric 7 (P0-2).** After the regex
+  suspicious-pattern rubric, the auditor classifies the SKILL body's *intent*
+  into six risk categories (network execution / persistence / shell bootstrap /
+  credential access / lateral movement / obfuscated execution) and `REJECT`s
+  any match — catching natural-language paraphrases ("retrieve the bootstrap
+  script … pipe it into a shell" == `curl … | bash`) the regex rubric misses.
+  Body-only input, no tool calls (the classifier is itself an attack surface),
+  biased toward REJECT.
+
+### Notes
+
+- `install.sh` deploys `notifier.md` + `memory-manager.md` + `build-skill-index.sh`
+  + `migrate-memory.sh`; seeds `skill-index.jsonl` and runs `migrate-memory.sh`
+  at install time; `mkdir`s `agent-memory/we-forge`.
+- Known follow-up: the scored pattern-detector under-counts short single-token
+  slugs (mitigated above by `ecc_recs`-authoritative ECC_MATCH); a cleaner fix
+  would special-case "single-token slug whose token appears in an ECC skill
+  name/description" at the detector. `memory-manager` should also prune
+  `ecc_recs` entries whose `ecc_skill` no longer exists in `skill-index.jsonl`.
+
+---
+
 **Date**: 2026-05-12 | EP-PARITY-002
 
 ### Fixes

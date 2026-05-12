@@ -24,7 +24,7 @@ from any directory**. Source: https://github.com/EunCHanPark/we-forge
   - `we-forgectl tui`                — ratatui terminal UI
   - `we-forgectl dashboard`          — http://127.0.0.1:8765 KPI dashboard
 - **Agent**: spawn via `Agent(subagent_type="we-forge")` for tick processing
-- **Sub-agents**: monitor-sentinel, pattern-detector, skill-synthesizer, quality-auditor
+- **Sub-agents**: monitor-sentinel, pattern-detector, skill-synthesizer, quality-auditor, notifier, memory-manager
 - **Slash commands** (work in any cwd):
   - `/ping-forge` — register this session with we-forge (manual heartbeat ping)
   - `/skill-report` — 6-section report (telemetry, top patterns, ECC matches, learned skills, decisions)
@@ -36,7 +36,7 @@ from any directory**. Source: https://github.com/EunCHanPark/we-forge
   - `~/.we-forge/config.json` — `{mode, interval_minutes, telegram_*, installed_at}`
   - `~/.we-forge/ecc-trace.jsonl` — every ECC marketplace skill leverage (ROI proof)
   - `~/.claude/learning/data/{events,patterns,promotion_queue,ledger}.jsonl`
-  - `~/.claude/agent-memory/we-forge/MEMORY.md` — agent persistent memory across ticks
+  - `~/.claude/agent-memory/we-forge/{hot.md, lessons.md, pointers.md}` — agent persistent memory (3-tier; sole writer = `memory-manager` sub-agent)
 
 ### When to actively involve we-forge in a session
 
@@ -120,7 +120,7 @@ where `<dash-encoded-cwd>` is the current working directory with `/` → `-`
 
 - **Project memory** (auto-loaded only when cwd is `~/we-forge`):
   `~/.claude/projects/<dash-encoded-cwd>/memory/MEMORY.md`
-- **we-forge agent's own memory** (loaded by we-forge agent on tick):
-  `~/.claude/agent-memory/we-forge/MEMORY.md`
+- **we-forge agent's own memory** (3-tier, owned by the `memory-manager` sub-agent):
+  `~/.claude/agent-memory/we-forge/{hot.md, lessons.md, pointers.md}` (legacy `MEMORY.md` → migrated by `learning/migrate-memory.sh`)
 - **Session save/resume** (cross-session work continuity):
   `/save-session` at end-of-session, `/resume-session` at start-of-next

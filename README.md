@@ -289,20 +289,25 @@ for ~96% of queue entries in normal use, keeping API costs minimal.
 
 ```
 ~/.claude/
-├── agents/                  monitor-sentinel · pattern-detector · skill-synthesizer · quality-auditor · we-forge
+├── agents/                  monitor-sentinel · pattern-detector · skill-synthesizer · quality-auditor · notifier · memory-manager · we-forge
 ├── commands/                /skill-report · /watch-and-learn · /dashboard · /ask-codex · /ask-gemini
 ├── hooks/stop-telemetry.sh  Stop / SubagentStop hook (always exits 0)
 ├── learning/
-│   ├── tick.sh              entry point with --dangerously-skip-permissions
+│   ├── tick.sh              entry point with --dangerously-skip-permissions (CLAUDE_TICK_TIMEOUT=900)
 │   ├── normalize.py         canonicalization + promotion rule
 │   ├── redact.sh            secret filter (--self-test)
-│   ├── build_ecc_index.py   ECC marketplace keyword index builder (485 skills)
+│   ├── build_ecc_index.py   ECC marketplace keyword index builder (485 skills, for skill-suggest)
+│   ├── build-skill-index.sh pattern-detector dedupe index builder (4 sources → skill-index.jsonl)
+│   ├── migrate-memory.sh    one-time MEMORY.md → 3-tier split (run by install.sh on upgrade)
 │   ├── sequence_normalize.py multi-step workflow N-gram detection (shadow mode)
 │   ├── backfill_ecc_match.py historical ECC_MATCH record enrichment
 │   └── data/                events / patterns / queue / ledger / state / sequence_candidates / rejected.txt
 ├── skills/learned/          synthesized skills (auditor-passed)
 └── agent-memory/we-forge/
-    ├── MEMORY.md            persistent agent memory across ticks
+    ├── hot.md               recent raw decision log (rolling ~7d, ≤10 KB)
+    ├── lessons.md           compressed durable lessons + frozen pre-migration archive (≤5 KB)
+    ├── pointers.md          machine-parseable JSON: blocklist / primitive_re / ecc_seen / ecc_recs / tick_counter / hwm / dead_skill_candidates
+    ├── skill-index.jsonl    pre-built dedupe corpus for pattern-detector (rebuilt every 24h)
     └── staging/             skill drafts when canonical path is blocked
 
 ~/.we-forge/
@@ -330,6 +335,27 @@ entries preserved, original backed up to `settings.json.bak.<ISO>`).
 - **Two-tier learning architecture.** we-forge runs in parallel with ECC's
   own `continuous-learning-v2` (homunculus). They share no storage but
   pattern-detector dedupes against ECC's outputs to avoid duplication.
+- **Thin orchestrator + specialists.** `we-forge` owns only control flow,
+  verdict decisions, the queue file, and the ledger; persistent memory is
+  delegated to `memory-manager`, draft writing to `skill-synthesizer`,
+  gating to `quality-auditor`, and the Telegram ping to `notifier`.
+- **3-tier agent memory.** `agent-memory/we-forge/` is `hot.md` (recent raw
+  decision log, rolling ~7d) / `lessons.md` (compressed durable lessons) /
+  `pointers.md` (machine-parseable lookups: blocklists, primitive regexes,
+  `ecc_recs`, tick counter, high-water mark). `memory-manager` is its sole
+  writer (atomic per-file writes, size-capped, with rollup).
+- **Pre-built dedupe index.** pattern-detector reads `skill-index.jsonl`
+  (one file, ~hundreds of lines, all four skill/instinct sources, rebuilt
+  every 24h) instead of globbing ~1000 SKILL.md per tick.
+- **`ecc_recs` is authoritative.** Once a slug has been matched to an ECC
+  marketplace skill it stays an ECC_MATCH regardless of later detector
+  scoring — covers short single-token slugs (`tmux`, `codex`, …) the scored
+  matcher under-counts.
+- **Hardened audit gate.** quality-auditor self-tests `redact.sh` before any
+  rubric check (a broken filter holds drafts, never auto-PASSes them) and adds
+  a semantic-intent rubric that REJECTs network-execution / persistence /
+  shell-bootstrap / credential-access / lateral-movement / obfuscated-execution
+  intents the regex rubric can't see.
 - **Aligned tick scheduling.** All ticks fire at slots aligned to local
   00:00 (e.g. 30-min interval → 48 slots/day at HH:00 and HH:30). Cleaner
   than "every N seconds since last tick" for predictable ops.
@@ -337,9 +363,10 @@ entries preserved, original backed up to `settings.json.bak.<ISO>`).
   promotion queue is non-empty.
 - **Secrets dropped, not masked.** `redact.sh` and `normalize.py` share a
   regex + Shannon-entropy filter.
-- **Primitive auto-blocklist.** 14+ regex patterns auto-DROP shell
-  primitives (`bash-grep-*`, `bash-cat-*`, `bash-find-*`, etc.) without
-  sub-agent dispatch, preserving API spend for novel patterns.
+- **Primitive auto-blocklist.** 30+ regex patterns auto-DROP shell
+  primitives (`bash-grep-*`, `bash-cat-*`, `bash-find-*`, etc.) and
+  single-tool baselines without sub-agent dispatch, preserving API spend for
+  novel patterns.
 - **Self-reference filter.** Patterns whose samples reference
   `~/.claude/learning/` are auto-DROPped (the observer effect — agent
   inspecting its own data shouldn't spawn skills).

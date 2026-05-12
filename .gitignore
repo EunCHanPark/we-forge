@@ -2,5 +2,8 @@ scripts/__pycache__/
 *__pycache__/
 dist/
 
-# Local Claude Code session artifacts — never commit (auto-swept by stray Stop hooks)
-.claude/
+# Local Claude Code session artifacts at the repo root — never commit
+# (a stray Stop hook once auto-committed .claude/scheduled_tasks.lock + a broken
+# gitlink as 2b6c720; that's reverted). Anchored to root so it does NOT match the
+# checked-in `home/.claude/CLAUDE.md` template.
+/.claude/
