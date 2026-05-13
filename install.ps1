@@ -164,17 +164,26 @@ try {
     Warn "hook install skipped: $($_.Exception.Message)"
 }
 
-# 6a-2. Learning runtime (tick.sh + normalize.py + redact.sh + data/ skeleton)
+# 6a-2. Learning runtime (tick.sh + normalize.py + redact.sh + helpers + data/ skeleton)
 #
 # Without this block the daemon registers but the tick pipeline can't run:
 # tick.sh doesn't exist to be called, normalize.py can't canonicalize events,
-# redact.sh can't filter secrets. The install.sh (Mac/Linux) copies these
-# from the cloned repo; the native Windows installer fetches them via raw URLs.
+# redact.sh can't filter secrets, and the agents reference build-skill-index.sh /
+# migrate-memory.sh / sequence_normalize.py / build_ecc_index.py / backfill_ecc_match.py.
+# install.sh (Mac/Linux) copies these from the cloned repo; the native Windows
+# installer fetches them via raw URLs. Keep this list in sync with install.sh's
+# `_copy "$REPO_DIR/learning/..."` block.
 try {
     $LearnDir     = Join-Path $ClaudeHome "learning"
     $LearnDataDir = Join-Path $LearnDir "data"
+    $AgentMemDir  = Join-Path $ClaudeHome "agent-memory\we-forge"
     New-Item -ItemType Directory -Force -Path $LearnDataDir | Out-Null
-    foreach ($f in @("tick.sh","normalize.py","redact.sh","settings.snippet.json")) {
+    New-Item -ItemType Directory -Force -Path $AgentMemDir  | Out-Null
+    foreach ($f in @(
+        "tick.sh","normalize.py","redact.sh","settings.snippet.json",
+        "build_ecc_index.py","build-skill-index.sh","migrate-memory.sh",
+        "sequence_normalize.py","backfill_ecc_match.py"
+    )) {
         $dest = Join-Path $LearnDir $f
         Invoke-WebRequest -Uri "$RawBase/learning/$f" -OutFile $dest -UseBasicParsing
     }
@@ -185,6 +194,15 @@ try {
     $stateFile = Join-Path $LearnDataDir "state.json"
     if (-not (Test-Path $stateFile)) {
         Set-Content -Path $stateFile -Value "{}" -Encoding UTF8
+    }
+    # Seed pattern-detector's dedupe index + migrate a legacy MEMORY.md (both no-op
+    # when already done / fresh install). Needs bash on PATH (Git Bash, bundled
+    # with Git for Windows); silently skipped if absent — tick.sh rebuilds the
+    # index on its first run anyway.
+    if (Get-Command bash -ErrorAction SilentlyContinue) {
+        $env:CLAUDE_HOME = $ClaudeHome
+        & bash (Join-Path $LearnDir "build-skill-index.sh") 2>$null
+        & bash (Join-Path $LearnDir "migrate-memory.sh")    2>$null
     }
     OK "learning runtime installed -> $LearnDir"
 } catch {
@@ -206,11 +224,12 @@ try {
     Warn "dashboard.py install skipped: $($_.Exception.Message)"
 }
 
-# 6a-3. Agent definitions (5 sub-agents) — spawned by we-forge tick loop
+# 6a-3. Agent definitions (orchestrator + 6 sub-agents) — used by the we-forge tick loop.
+# Keep this list in sync with install.sh's `for a in ... ; do _copy ...` block.
 try {
     $AgentsDir = Join-Path $ClaudeHome "agents"
     New-Item -ItemType Directory -Force -Path $AgentsDir | Out-Null
-    foreach ($a in @("we-forge","monitor-sentinel","pattern-detector","quality-auditor","skill-synthesizer")) {
+    foreach ($a in @("monitor-sentinel","pattern-detector","skill-synthesizer","quality-auditor","notifier","memory-manager","we-forge")) {
         $dest = Join-Path $AgentsDir "$a.md"
         Invoke-WebRequest -Uri "$RawBase/agents/$a.md" -OutFile $dest -UseBasicParsing
     }
