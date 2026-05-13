@@ -64,7 +64,7 @@ audit trail. Every leveraged ECC skill is recorded in
 ```bash
 ARCH=$(uname -m); OS=$(uname | tr A-Z a-z)
 TRIPLE="${ARCH}-$([ "$OS" = darwin ] && echo apple-darwin || echo unknown-linux-gnu)"
-curl -fsSL https://github.com/EunCHanPark/we-forge/releases/latest/download/we-forgectl-${TRIPLE}.tar.gz | tar xz
+curl -fsSL https://github.com/EunCHanPark/we-forge/releases/download/v0.5.0/we-forgectl-${TRIPLE}.tar.gz | tar xz
 sudo mv we-forgectl-* /usr/local/bin/we-forgectl
 we-forgectl install
 ```
