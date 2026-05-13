@@ -195,15 +195,12 @@ try {
     if (-not (Test-Path $stateFile)) {
         Set-Content -Path $stateFile -Value "{}" -Encoding UTF8
     }
-    # Seed pattern-detector's dedupe index + migrate a legacy MEMORY.md (both no-op
-    # when already done / fresh install). Needs bash on PATH (Git Bash, bundled
-    # with Git for Windows); silently skipped if absent — tick.sh rebuilds the
-    # index on its first run anyway.
-    if (Get-Command bash -ErrorAction SilentlyContinue) {
-        $env:CLAUDE_HOME = $ClaudeHome
-        & bash (Join-Path $LearnDir "build-skill-index.sh") 2>$null
-        & bash (Join-Path $LearnDir "migrate-memory.sh")    2>$null
-    }
+    # NOTE: we intentionally do NOT run build-skill-index.sh / migrate-memory.sh
+    # here. `Get-Command bash` on Windows usually resolves to the System32 WSL
+    # relay stub (C:\Windows\System32\bash.exe), which throws when WSL isn't
+    # installed and — under $ErrorActionPreference='Stop' — would abort this whole
+    # block. tick.sh rebuilds skill-index.jsonl on its first run, and
+    # migrate-memory.sh is a no-op on a fresh install, so there's nothing lost.
     OK "learning runtime installed -> $LearnDir"
 } catch {
     Warn "learning runtime install skipped: $($_.Exception.Message)"
