@@ -60,6 +60,13 @@ enum Cmd {
         minutes: u32,
     },
 
+    /// Toggle ECC multi-agent workflow suggestions in skill-suggest injections.
+    SetWorkflowSuggest {
+        /// `on` to enable, `off` to disable (default off; opt-in).
+        #[arg(value_parser = ["on","off"])]
+        state: String,
+    },
+
     /// Long-running loop (called by service manager).
     Daemon,
     /// Run a single tick and exit (called by scheduled mode).
@@ -178,6 +185,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Restart => cli::lifecycle::restart(),
         Cmd::Status => cli::status::run(),
         Cmd::SetInterval { minutes } => cli::set_interval::run(minutes),
+        Cmd::SetWorkflowSuggest { state } => cli::set_workflow_suggest::run(&state),
         Cmd::Daemon => {
             // Build a tokio runtime here so the rest of the CLI stays sync.
             tokio::runtime::Builder::new_multi_thread()

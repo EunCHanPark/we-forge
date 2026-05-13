@@ -190,6 +190,43 @@ pub mod set_interval {
 }
 
 // ---------------------------------------------------------------------------
+// set-workflow-suggest — toggle ECC multi-agent workflow recommendations in
+// the skill-suggest UserPromptSubmit injection (opt-in; default off).
+// ---------------------------------------------------------------------------
+
+pub mod set_workflow_suggest {
+    use super::*;
+
+    pub fn run(state: &str) -> Result<()> {
+        let enable = match state {
+            "on"  => true,
+            "off" => false,
+            _ => { eprintln!("  FAIL state must be 'on' or 'off'"); return Err(anyhow::anyhow!("bad state")); }
+        };
+        let mut cfg = config::with_env_overrides(config::load());
+        let old = cfg.workflow_suggest_enabled;
+        cfg.workflow_suggest_enabled = enable;
+        config::save(&cfg)?;
+        println!("  OK workflow-suggest: {} → {}",
+                 if old    { "on" } else { "off" },
+                 if enable { "on" } else { "off" });
+        if enable {
+            println!("  effect:   skill-suggest injections will now append ECC multi-agent");
+            println!("            workflow recommendations (santa-method / council /");
+            println!("            multi-workflow / gan-style-harness / …) when prompts");
+            println!("            trigger their patterns.");
+        } else {
+            println!("  effect:   skill-suggest reverts to skill-only suggestions.");
+        }
+        println!("  config:   {}", paths::config_file().display());
+        let _ = ecc_core::log("enterprise-agent-ops",
+            &format!("workflow-suggest toggled to {}", if enable { "on" } else { "off" }),
+            "cli");
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // dashboard (shells out to Python dashboard.py)
 // ---------------------------------------------------------------------------
 
@@ -1020,6 +1057,123 @@ pub mod skill_suggest {
             });
     }
 
+    // -----------------------------------------------------------------------
+    // workflow_match — opt-in (cfg.workflow_suggest_enabled). Pattern-match
+    // the prompt to ECC multi-agent workflow skills (`/santa-method`,
+    // `/council`, `/multi-workflow`, `/gan-style-harness`, …). Returns a small
+    // ranked list of (slug, why). Conservative on purpose: precision >
+    // recall, so the injection stays useful rather than noisy.
+    // -----------------------------------------------------------------------
+    struct WfRule {
+        slug: &'static str,   // namespaced ECC skill slug
+        why:  &'static str,   // one-line rationale shown next to the recommendation
+        // Each pattern is a list of substrings; ALL must appear (case-insensitive)
+        // somewhere in the prompt for the rule to fire. ANY of the patterns can
+        // trigger.
+        any_of_all: &'static [&'static [&'static str]],
+    }
+
+    const WORKFLOW_RULES: &[WfRule] = &[
+        WfRule {
+            slug: "everything-claude-code:santa-method",
+            why:  "production-bound code / dual-reviewer convergence",
+            any_of_all: &[
+                &["production"], &["deploy"],
+                &["push to main"], &["push to master"],
+                &["release candidate"], &["before shipping"],
+                &["compliance"], &["regulatory"],
+                &["customer-facing"], &["pre-launch"],
+            ],
+        },
+        WfRule {
+            slug: "everything-claude-code:council",
+            why:  "ambiguous tradeoff / multiple valid paths",
+            any_of_all: &[
+                &["should i"], &["should we"],
+                &["trade-off"], &["tradeoff"],
+                &[" vs "], &[" or "],
+                &["which", "better"], &["which", "choose"],
+                &["pros and cons"], &["decide between"],
+                &["go/no-go"], &["go-no-go"],
+            ],
+        },
+        WfRule {
+            slug: "everything-claude-code:multi-workflow",
+            why:  "multi-phase feature build (research → plan → execute → review)",
+            any_of_all: &[
+                &["new feature"], &["implement", "across"],
+                &["build out", "feature"], &["multi-file"],
+                &["refactor", "across"], &["end-to-end implementation"],
+            ],
+        },
+        WfRule {
+            slug: "everything-claude-code:gan-style-harness",
+            why:  "long-running autonomous app build (generator/evaluator loop)",
+            any_of_all: &[
+                &["build", "app", "from"], &["from scratch"],
+                &["prd"], &["from a one-liner"],
+                &["autonomous", "build"],
+            ],
+        },
+        WfRule {
+            slug: "everything-claude-code:multi-frontend",
+            why:  "frontend-focused multi-model workflow (UI/UX/animation)",
+            any_of_all: &[
+                &["frontend", "feature"], &["ui", "polish"],
+                &["component library"], &["design system"],
+            ],
+        },
+        WfRule {
+            slug: "everything-claude-code:multi-backend",
+            why:  "backend-focused multi-model workflow (APIs/algorithms/data)",
+            any_of_all: &[
+                &["backend", "feature"], &["api", "design"],
+                &["database", "schema"], &["service", "architecture"],
+            ],
+        },
+        WfRule {
+            slug: "everything-claude-code:team-builder",
+            why:  "ad-hoc parallel team across mixed domains",
+            any_of_all: &[
+                &["pick agents"], &["compose team"],
+                &["parallel team"], &["dispatch", "agents"],
+            ],
+        },
+        WfRule {
+            slug: "everything-claude-code:review-pr",
+            why:  "PR review via specialized review agents",
+            any_of_all: &[
+                &["review pr"], &["review", "pull request"],
+                &["pr review"],
+            ],
+        },
+        WfRule {
+            slug: "everything-claude-code:security-review",
+            why:  "security-focused review pass",
+            any_of_all: &[
+                &["security review"], &["audit", "security"],
+                &["vulnerab"], &["threat model"],
+            ],
+        },
+    ];
+
+    fn workflow_match(prompt: &str, max_n: usize) -> Vec<(&'static str, &'static str)> {
+        let lc = prompt.to_ascii_lowercase();
+        let mut hits: Vec<(&'static str, &'static str)> = Vec::new();
+        for rule in WORKFLOW_RULES {
+            let fired = rule.any_of_all.iter().any(|reqs|
+                reqs.iter().all(|needle| lc.contains(&needle.to_ascii_lowercase()))
+            );
+            if fired {
+                if !hits.iter().any(|(s, _)| *s == rule.slug) {
+                    hits.push((rule.slug, rule.why));
+                    if hits.len() >= max_n { break; }
+                }
+            }
+        }
+        hits
+    }
+
     pub fn run(prompt: &str, top_n: usize, inject: bool, log: bool, session_id: &str) -> Result<()> {
         let prompt = prompt.trim();
         if prompt.is_empty() { return Ok(()); }
@@ -1029,25 +1183,43 @@ pub mod skill_suggest {
             return Ok(());
         }
         let suggestions = rank(prompt, top_n.max(1), 0.0);
+
+        // Opt-in: ECC multi-agent workflow recommendations (Level-3 patterns).
+        // Gated by config.workflow_suggest_enabled (default off).
+        let cfg = config::with_env_overrides(config::load());
+        let workflows = if cfg.workflow_suggest_enabled {
+            workflow_match(prompt, 3)
+        } else {
+            Vec::new()
+        };
+
         if log {
             log_turn(prompt, session_id);
             if !suggestions.is_empty() {
                 log_suggestion(prompt, &suggestions, session_id);
             }
         }
-        if suggestions.is_empty() { return Ok(()); }
+        if suggestions.is_empty() && workflows.is_empty() { return Ok(()); }
 
         if inject {
-            let mut lines = vec![
-                "<system-reminder>".to_string(),
-                format!("we-forge skill-suggest matched these ECC skills against the user's prompt (top {}, IDF-weighted):", suggestions.len()),
-                "".to_string(),
-            ];
-            for (i, s) in suggestions.iter().enumerate() {
-                lines.push(format!("{}. `{}` (score {}) — {}", i + 1, s.namespaced_slug, s.score, s.description));
+            let mut lines = vec!["<system-reminder>".to_string()];
+            if !suggestions.is_empty() {
+                lines.push(format!("we-forge skill-suggest matched these ECC skills against the user's prompt (top {}, IDF-weighted):", suggestions.len()));
+                lines.push("".to_string());
+                for (i, s) in suggestions.iter().enumerate() {
+                    lines.push(format!("{}. `{}` (score {}) — {}", i + 1, s.namespaced_slug, s.score, s.description));
+                }
+                lines.push("".to_string());
+                lines.push("If any of these match the user's intent, invoke via the Skill tool BEFORE writing code. If none apply, proceed normally — do not announce that you are skipping suggestions.".to_string());
             }
-            lines.push("".to_string());
-            lines.push("If any of these match the user's intent, invoke via the Skill tool BEFORE writing code. If none apply, proceed normally — do not announce that you are skipping suggestions.".to_string());
+            if !workflows.is_empty() {
+                if !suggestions.is_empty() { lines.push("".to_string()); }
+                lines.push("Multi-agent workflow recommendations (opt-in, prompt-pattern matched):".to_string());
+                for (slug, why) in &workflows {
+                    lines.push(format!("- `{}` — {}", slug, why));
+                }
+                lines.push("Invoke via the Skill tool only if the user's task fits this workflow shape; otherwise ignore. These are not a substitute for the skill suggestions above.".to_string());
+            }
             lines.push("</system-reminder>".to_string());
             println!("{}", lines.join("\n"));
             return Ok(());
@@ -1060,6 +1232,12 @@ pub mod skill_suggest {
             let ov: Vec<String> = s.overlap.iter().take(8).cloned().collect();
             println!("     overlap: {}", ov.join(", "));
             let _ = &s.slug;
+        }
+        if !workflows.is_empty() {
+            println!("workflow-suggest: {} match{}", workflows.len(), if workflows.len() == 1 { "" } else { "es" });
+            for (slug, why) in &workflows {
+                println!("  - {:55} {}", slug, why);
+            }
         }
         Ok(())
     }

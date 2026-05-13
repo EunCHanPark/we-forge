@@ -126,6 +126,12 @@ pub mod config {
         // Hot-reloaded by daemon on every loop iteration.
         #[serde(default)]
         pub interval_minutes: u32,
+        // skill-suggest extension: append ECC multi-agent workflow recommendations
+        // (santa-method / council / multi-workflow / gan-style-harness / …) to
+        // the UserPromptSubmit injection when the prompt matches their triggers.
+        // Default off — opt-in via `we-forgectl set-workflow-suggest on`.
+        #[serde(default)]
+        pub workflow_suggest_enabled: bool,
     }
 
     /// Default cadence in minutes when config.interval_minutes is unset/0.
