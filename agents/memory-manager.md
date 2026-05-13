@@ -95,14 +95,36 @@ Steps (build all file contents in memory, then write each once):
    always contain all seven keys: `blocklist`, `primitive_re`, `ecc_seen`,
    `ecc_recs`, `tick_counter`, `hwm`, `dead_skill_candidates` (plus the optional
    `_meta` block if present) — even when a value is an empty list.
-4. **Enforce caps.** If `hot.md` > 10 KB after step 2, roll the oldest entries
-   to `lessons.md` regardless of age until it fits. If `lessons.md` > 5 KB,
-   compress its `## Archived Orchestration Log` block to a single
-   `<!-- ROLLUP pre-<date>: <n> ticks rolled up -->` line (keep `## Lessons`,
-   `## Durable orchestration hints`, `## User Preferences` intact).
+4. **Enforce caps — MANDATORY, MEASURED, BY BYTES.** This step is not optional
+   and not best-effort; it runs **every** `record` call and the written files
+   **must** end up at or below the caps below. Procedure:
+   1. Compute the candidate `hot.md` body length in bytes (UTF-8). If it is
+      `> 10240` bytes (10 KB), iterate: take the **oldest** `<!-- tick-N ... -->`
+      comment line (smallest N or earliest date) and **replace its body with a
+      single rollup entry**:
+      `<!-- ROLLUP tick-N-START..tick-N-END (date..date): R entries, p PASS, e
+      ECC_MATCH, d DROP, j REJECT -->`
+      where R/p/e/d/j are the sums across the rolled-up ticks. Merge consecutive
+      ticks into one rollup line (don't emit one rollup line per tick rolled).
+      Re-measure; repeat until ≤ 10240 bytes. **Preserve every `REJECT` line
+      verbatim** — never roll those up (still needed for the blocklist).
+   2. Compute the candidate `lessons.md` body length. If `> 5120` bytes (5 KB),
+      compress the `## Archived Orchestration Log` block to a single
+      `<!-- ROLLUP pre-<oldest-date> .. <newest-date>: <total-ticks> ticks rolled
+      up, <p> PASS / <e> ECC_MATCH / <d> DROP / <j> REJECT -->` line.
+      **Never touch** `## Lessons`, `## Durable orchestration hints`, or
+      `## User Preferences` — only the archived block.
+   3. **Invariant before write**: `len(hot.md) ≤ 10240` AND `len(lessons.md) ≤
+      5120`. If either still exceeds after step 4.1/4.2, the algorithm has a
+      bug — print `memory-manager: cap enforcement failed (hot=<a>B lessons=<b>B)`
+      on stdout, write what you have (better stale than lost), and stop. Do NOT
+      silently write an oversized file.
 5. **Atomic write** each changed file (write to `<path>.tmp` then rename, or one
-   Write call per file). Print
-   `memory-manager: recorded <D> decisions; hot=<a>B lessons=<b>B pointers=<c>B` on stdout.
+   Write call per file). After writing, **measure the on-disk size and verify
+   the cap invariant** (`hot ≤ 10240`, `lessons ≤ 5120`). Print
+   `memory-manager: recorded <D> decisions; hot=<a>B/10240 lessons=<b>B/5120 pointers=<c>B`
+   on stdout. If a cap is exceeded on disk, the line must end with
+   `CAP_OVERSHOOT(hot/lessons)` — visible to the orchestrator + /skill-report.
 
 ## Rules
 
