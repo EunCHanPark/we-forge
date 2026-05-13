@@ -1153,6 +1153,27 @@ pub mod skill_suggest {
                 &["agent team"], &["which agents"],
             ],
         },
+        WfRule {
+            slug: "everything-claude-code:dmux-workflows",
+            why:  "multi-agent orchestration in tmux/dmux/cmux panes (multiple OS processes)",
+            any_of_all: &[
+                // Distinctive single tokens — safe alone
+                &["dmux"], &["cmux"],
+                // tmux is too generic — require a coordination cue alongside it
+                &["tmux", "claude"], &["tmux", "agent"], &["tmux", "pane"],
+                &["tmux", "session", "parallel"],
+                // Parallelism + agent/claude/instance signals
+                &["parallel", "agent"], &["parallel", "claude"], &["parallel", "instance"],
+                &["multiple claude"], &["multiple", "instances"],
+                &["run", "agents", "parallel"], &["run", "claude", "parallel"],
+                &["agents", "in parallel"], &["claudes", "in parallel"],
+                // Work splitting / coordination patterns
+                &["split work"], &["divide and conquer"],
+                &["pane", "agent"], &["pane", "claude"],
+                &["fan out", "agent"], &["fan-out", "agent"],
+                &["claude-teams"],
+            ],
+        },
 
         // --- Review / audit -------------------------------------------------
         WfRule {
