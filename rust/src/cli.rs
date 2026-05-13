@@ -1390,31 +1390,37 @@ pub mod skill_suggest {
                 log_suggestion(prompt, &suggestions, session_id);
             }
         }
-        if suggestions.is_empty() && workflows.is_empty() { return Ok(()); }
-
         if inject {
             let mut lines = vec!["<system-reminder>".to_string()];
-            if !suggestions.is_empty() {
-                lines.push(format!("we-forge skill-suggest matched these ECC skills against the user's prompt (top {}, IDF-weighted):", suggestions.len()));
-                lines.push("".to_string());
-                for (i, s) in suggestions.iter().enumerate() {
-                    lines.push(format!("{}. `{}` (score {}) — {}", i + 1, s.namespaced_slug, s.score, s.description));
+            if suggestions.is_empty() && workflows.is_empty() {
+                // No ECC match — inject explicit notice so Claude announces it.
+                lines.push("skill-suggest: 이 프롬프트에 매칭되는 ECC 스킬 없음.".to_string());
+                lines.push("작업 시작 전 반드시 한 줄 알림: \"ECC 매칭 없음 — 일반 진행\"".to_string());
+            } else {
+                if !suggestions.is_empty() {
+                    lines.push(format!("we-forge skill-suggest: top {} ECC skills matched (IDF-weighted):", suggestions.len()));
+                    lines.push("".to_string());
+                    for (i, s) in suggestions.iter().enumerate() {
+                        lines.push(format!("{}. `{}` (score {}) — {}", i + 1, s.namespaced_slug, s.score, s.description));
+                    }
+                    lines.push("".to_string());
+                    lines.push("매칭 스킬이 있으면: (1) \"💡 ECC: `<name>` 사용합니다.\" 한 줄 알림 후 (2) Skill() 호출 → 작업 진행. 해당 없으면: \"ECC 후보 있으나 무관 (<names>) — 일반 진행\" 한 줄 알림 후 작업.".to_string());
                 }
-                lines.push("".to_string());
-                lines.push("If any of these match the user's intent, invoke via the Skill tool BEFORE writing code. If none apply, proceed normally — do not announce that you are skipping suggestions.".to_string());
-            }
-            if !workflows.is_empty() {
-                if !suggestions.is_empty() { lines.push("".to_string()); }
-                lines.push("Multi-agent workflow recommendations (opt-in, prompt-pattern matched):".to_string());
-                for (slug, why) in &workflows {
-                    lines.push(format!("- `{}` — {}", slug, why));
+                if !workflows.is_empty() {
+                    if !suggestions.is_empty() { lines.push("".to_string()); }
+                    lines.push("Multi-agent workflow recommendations (opt-in, prompt-pattern matched):".to_string());
+                    for (slug, why) in &workflows {
+                        lines.push(format!("- `{}` — {}", slug, why));
+                    }
+                    lines.push("Invoke via the Skill tool only if the user's task fits this workflow shape; otherwise ignore.".to_string());
                 }
-                lines.push("Invoke via the Skill tool only if the user's task fits this workflow shape; otherwise ignore. These are not a substitute for the skill suggestions above.".to_string());
             }
             lines.push("</system-reminder>".to_string());
             println!("{}", lines.join("\n"));
             return Ok(());
         }
+
+        if suggestions.is_empty() && workflows.is_empty() { return Ok(()); }
 
         println!("skill-suggest: top {} for prompt ({} chars)", suggestions.len(), prompt.chars().count());
         for (i, s) in suggestions.iter().enumerate() {
