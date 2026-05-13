@@ -24,9 +24,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-apple-darwin
-            os:     macos-13
-            artifact: we-forgectl
+          # x86_64-apple-darwin (macos-13 / Intel) intentionally dropped:
+          # the macos-13 runner pool is frequently backed up (20-40min+ queue),
+          # Intel Macs are a shrinking minority, and aarch64-apple-darwin covers
+          # current hardware. Re-add a `- target: x86_64-apple-darwin / os: macos-13`
+          # entry here (plus its `files:` line below) if Intel-Mac demand returns.
           - target: aarch64-apple-darwin
             os:     macos-14
             artifact: we-forgectl
@@ -106,7 +108,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/we-forgectl-x86_64-apple-darwin.tar.gz
             dist/we-forgectl-aarch64-apple-darwin.tar.gz
             dist/we-forgectl-x86_64-unknown-linux-gnu.tar.gz
             dist/we-forgectl-x86_64-pc-windows-msvc.zip
