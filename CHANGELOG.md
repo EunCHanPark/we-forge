@@ -6,7 +6,7 @@ All notable changes to we-forge are documented in this file. Format follows
 
 ## [Unreleased]
 
-**Date**: 2026-05-12 | learning-loop hardening + orchestrator decomposition (P0/P1 work order)
+## [0.5.0] — 2026-05-13 | learning-loop hardening + orchestrator decomposition (P0/P1 work order)
 
 ### New agents
 
