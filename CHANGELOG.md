@@ -6,6 +6,22 @@ All notable changes to we-forge are documented in this file. Format follows
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-05-14 | skill-suggest ECC status announcement
+
+### Changed
+
+- **`skill-suggest --inject`** now always emits a `<system-reminder>` block for
+  prompts ≥ 15 chars, even when no ECC skill matches. Previously, no-match
+  prompts produced silent output, leaving Claude with no signal to announce ECC
+  status. Now:
+  - No match → injects `"ECC 매칭 없음"` notice; Claude announces
+    `"ECC 매칭 없음 — 일반 진행"` before work.
+  - Match found → candidate list stays; instruction updated to require
+    `"💡 ECC: <name> 사용합니다."` announcement before `Skill()` invocation.
+  - Trivial prompts (<15 chars) → unchanged silent skip.
+- **`~/.claude/CLAUDE.md` response protocol** updated (rule 4 → mandatory
+  no-match announcement; new rule 5 for trivial silent skip).
+
 ## [0.5.0] — 2026-05-13 | learning-loop hardening + orchestrator decomposition (P0/P1 work order)
 
 ### New agents
