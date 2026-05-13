@@ -90,7 +90,16 @@ try {
     Fail "extract failed: $($_.Exception.Message)"
 }
 
+# Newer release zips name the binary `we-forgectl-x86_64-pc-windows-msvc.exe`
+# (matching the tarball naming for the other platforms, which install.sh renames
+# with `mv we-forgectl-* we-forgectl`); older zips (<= v0.4.x) contained
+# `we-forgectl.exe` directly. Normalize to `we-forgectl.exe` either way.
 $ExePath = Join-Path $InstallDir "we-forgectl.exe"
+$triplet = Get-ChildItem -Path $InstallDir -Filter "we-forgectl-*.exe" -ErrorAction SilentlyContinue |
+           Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if ($triplet) {
+    Move-Item -Path $triplet.FullName -Destination $ExePath -Force
+}
 if (-not (Test-Path $ExePath)) {
     Fail "we-forgectl.exe not found at $ExePath after extract"
 }
