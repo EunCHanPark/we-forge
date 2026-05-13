@@ -697,24 +697,49 @@ rm ~/.claude/commands/{watch-and-learn,skill-report,ask-codex,ask-gemini}.md
 
 ---
 
-## 8. ECC 마켓플레이스 통합 작업 protocol (2026-04-26)
+## 8. ECC 마켓플레이스 통합 작업 protocol (skill-suggest era, 2026-05-14)
 
-Claude Code 세션 안에서 최대 ROI를 얻기 위한 **4-step 통일 workflow**:
+> v0.5.1부터 advisor 4-step 프로토콜이 **자동 ECC 상태 알림**으로 대체됨.
 
+### 8-1. 자동 흐름 (매 프롬프트)
+
+`UserPromptSubmit` hook이 `we-forgectl skill-suggest --inject --log`를 자동 실행,
+Claude에게 항상 다음 중 하나를 주입:
+
+| 상황 | 주입 내용 | Claude 첫 줄 |
+|------|----------|-------------|
+| ECC 스킬 매칭됨 | 후보 목록 (top 3, IDF 가중치) | `💡 ECC: <name> 사용합니다.` → `Skill()` 호출 |
+| 매칭 없음 (프롬프트 ≥ 15자) | `"ECC 매칭 없음"` 알림 | `ECC 매칭 없음 — 일반 진행` |
+| 짧은 프롬프트 (< 15자) | 없음 | silent skip |
+
+**핵심**: 비자명한 모든 작업에서 ECC 상태를 첫 줄에 알림. 이전처럼 매칭 없을 때 아무 출력 없이 진행하지 않음.
+
+### 8-2. 수동 기록 (선택)
+
+```bash
+# ECC 스킬 수동 기록
+we-forgectl ecc-log <skill> "<reason>"
+
+# skill-suggest 주입 테스트
+we-forgectl skill-suggest --inject "프롬프트 내용"
+
+# hit rate 확인 (최근 24h)
+we-forgectl skill-hits
+
+# workflow-level 제안 토글 (멀티에이전트 패턴, opt-in)
+we-forgectl set-workflow-suggest on
 ```
-1. advisor()                          ← 방향/접근/리스크 검증
-   ↓
-2. ECC 활용: <skill> → <reason>       ← 마켓플레이스 스킬 명시
-   then: we-forgectl ecc-log <skill> "<reason>"
-   ↓
-3. 작업 실행                          ← 구현/탐색/리팩토링
-   ↓
-4. advisor()                          ← 품질/완성도 재검증
-```
 
-**목표**: ECC 마켓플레이스가 당신의 접근법을 어떻게 형성했는지 명시적으로 기록 (추적성 → ROI). advisor 게이팅으로 불필요한 재작업 방지.
+### 8-3. advisor (선택 — 필수 아님)
 
-**자동 상기**: SessionStart hook 이 `~/.claude/hooks/sessionstart.sh` 에 protocol 상기 메시지 포함. CLAUDE.md 템플릿도 이 패턴 반영.
+`Agent(subagent_type="Plan")` 호출은 아래 경우만:
+- 멀티파일 아키텍처 변경
+- 되돌리기 어려운 작업 (DB 마이그레이션, API 계약 변경)
+
+일반 작업은 skill-suggest 주입이 외부 시각 역할을 대신함.
+
+**자동 상기**: SessionStart hook이 프로토콜 상기 메시지를 포함.
+`~/.claude/CLAUDE.md`에 규칙 상세 기록됨.
 
 ---
 

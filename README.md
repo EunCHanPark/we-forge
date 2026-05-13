@@ -64,7 +64,7 @@ audit trail. Every leveraged ECC skill is recorded in
 ```bash
 ARCH=$(uname -m); OS=$(uname | tr A-Z a-z)
 TRIPLE="${ARCH}-$([ "$OS" = darwin ] && echo apple-darwin || echo unknown-linux-gnu)"
-curl -fsSL https://github.com/EunCHanPark/we-forge/releases/download/v0.5.0/we-forgectl-${TRIPLE}.tar.gz | tar xz
+curl -fsSL https://github.com/EunCHanPark/we-forge/releases/download/v0.5.1/we-forgectl-${TRIPLE}.tar.gz | tar xz
 sudo mv we-forgectl-* /usr/local/bin/we-forgectl
 we-forgectl install
 ```
@@ -186,6 +186,33 @@ we-forgectl uninstall                 # safety-backup → remove
 /dashboard tui    # rich-powered terminal UI (pip install rich)
 /dashboard once   # one-shot stdout snapshot, no deps
 /watch-and-learn  # manually trigger the synthesize-and-audit loop
+```
+
+---
+
+## ECC status on every prompt (skill-suggest, v0.5.1+)
+
+The `UserPromptSubmit` hook fires `we-forgectl skill-suggest --inject --log`
+on every user prompt. Claude always receives one of three injections:
+
+| Situation | Injected notice | Claude announces |
+|-----------|----------------|-----------------|
+| ECC skill matched (IDF ≥ threshold) | Candidate list (top 3) | `💡 ECC: <name> 사용합니다.` then `Skill()` |
+| No ECC match (prompt ≥ 15 chars) | `"ECC 매칭 없음"` notice | `ECC 매칭 없음 — 일반 진행` |
+| Trivial prompt (< 15 chars) | nothing | silent skip |
+
+This means you always know whether an ECC skill was considered — even when
+none applied. Previously, no-match prompts produced silent output.
+
+```bash
+# Test manually
+we-forgectl skill-suggest --inject "your prompt here"
+
+# Check hit rate (last 24h)
+we-forgectl skill-hits
+
+# Toggle workflow-level suggestions (multi-agent patterns, opt-in)
+we-forgectl set-workflow-suggest on
 ```
 
 ---
@@ -376,6 +403,11 @@ entries preserved, original backed up to `settings.json.bak.<ISO>`).
 - **Self-reference filter.** Patterns whose samples reference
   `~/.claude/learning/` are auto-DROPped (the observer effect — agent
   inspecting its own data shouldn't spawn skills).
+- **ECC status on every prompt.** `UserPromptSubmit` hook injects an ECC
+  status block for every non-trivial prompt (≥ 15 chars): matched candidates
+  list, or an explicit "no ECC match" notice. Claude always announces ECC
+  status as the first line of its response — either the skill it will invoke
+  or that none applied. No silent skips for non-trivial work.
 - **ECC alignment disclosure.** Every tick output starts with the ECC
   marketplace skills shaping its behavior, recorded to ECC trace.
 - **Single-instance lock.** `tick.sh` uses portable `mkdir`-based locking;
