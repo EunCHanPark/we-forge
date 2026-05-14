@@ -314,6 +314,30 @@ def main(argv: list[str]) -> int:
 
     idf = _compute_idf(skills)
     suggestable_count = sum(1 for s in skills if s.get("suggestable"))
+    marketplace_count = sum(1 for s in skills if s.get("source") == "marketplace")
+
+    # Self-validate output shape before writing. The Rust skill-suggest matcher
+    # at rust/src/cli.rs:951,965 requires both `idf` (root-level dict) and
+    # per-skill `suggestable=true` to score anything. A regression that drops
+    # either field silently returns "no match" for every prompt — and tick.sh's
+    # mtime-only staleness check (24h) cannot detect that. Refuse to write a
+    # degenerate index so the existing valid one stays in place until fixed.
+    if marketplace_count > 0:
+        problems: list[str] = []
+        if suggestable_count == 0:
+            problems.append("suggestable_count=0 (per-skill suggestable flag dropped?)")
+        if not idf:
+            problems.append("idf is empty (IDF computation missing?)")
+        if problems:
+            print(
+                "build_ecc_index: REFUSING to write degenerate index "
+                f"({marketplace_count} marketplace skills found but: "
+                + "; ".join(problems) + "). "
+                "Existing index left untouched. "
+                "Inspect _is_suggestable / _compute_idf in this script.",
+                file=sys.stderr,
+            )
+            return 1
 
     payload = {
         "built_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

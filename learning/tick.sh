@@ -324,7 +324,30 @@ _main() {
       [ $(( now - ${idx_mtime:-0} )) -lt 86400 ] && stale=0
     fi
     if [ "$stale" = "1" ]; then
-      python3 "$idx_builder" >>"$LOG" 2>&1 || _log "ecc-index rebuild failed"
+      python3 "$idx_builder" >>"$LOG" 2>&1 || _log "ecc-index rebuild failed (builder exited non-zero; existing index untouched)"
+    fi
+
+    # Integrity gate: even with fresh mtime, verify the on-disk index actually
+    # has the shape the Rust skill-suggest matcher requires. The builder's own
+    # self-validation catches a degenerate rebuild, but this catches stale
+    # corrupt indexes from older builder versions or out-of-band edits.
+    if [ -f "$idx" ]; then
+      python3 - "$idx" <<'PYEOF' >>"$LOG" 2>&1 || _log "ecc-index integrity check failed — skill-suggest will return 'no match' for every prompt (rebuild via: python3 learning/build_ecc_index.py)"
+import json, sys
+try:
+    idx = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception as e:
+    print(f"ecc-index integrity: unreadable ({e})", file=sys.stderr); sys.exit(1)
+marketplace = sum(1 for s in idx.get("skills", []) if s.get("source") == "marketplace")
+if marketplace == 0:
+    sys.exit(0)  # no marketplace skills installed → empty idf/suggestable is fine
+sug = idx.get("suggestable_count", 0) or sum(1 for s in idx.get("skills", []) if s.get("suggestable"))
+idf = idx.get("idf") or {}
+if sug == 0 or not idf:
+    print(f"ecc-index integrity: degenerate ({marketplace} marketplace skills, "
+          f"suggestable={sug}, idf_terms={len(idf)})", file=sys.stderr)
+    sys.exit(1)
+PYEOF
     fi
   fi
 
