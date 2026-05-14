@@ -4,16 +4,20 @@
 Output file (~/.we-forge/ecc-index.json by default; override via WE_FORGE_HOME):
 
     {
-      "built_at":  "2026-04-26T12:00:00Z",
-      "skill_count": 485,
+      "built_at":          "2026-04-27T12:00:00Z",
+      "skill_count":       485,
+      "suggestable_count": 410,
+      "idf":               { "token": float, ... },   # BM25-lite IDF per token
       "skills": [
         {
-          "slug":        "git-workflow",
-          "name":        "git-workflow",
-          "description": "Branch + commit hygiene for everyday git ops...",
-          "tokens":      ["branch","commit","hygiene","everyday"],
-          "source":      "marketplace",
-          "path":        "~/.claude/plugins/marketplaces/.../SKILL.md"
+          "slug":            "git-workflow",
+          "name":            "git-workflow",
+          "namespaced_slug": "everything-claude-code:git-workflow",
+          "description":     "Branch + commit hygiene for everyday git ops...",
+          "tokens":          ["branch","commit","hygiene","everyday"],
+          "source":          "marketplace",
+          "suggestable":     true,
+          "path":            "~/.claude/plugins/marketplaces/.../SKILL.md"
         },
         ...
       ]
@@ -26,15 +30,23 @@ Sources scanned (in priority order):
   3. ~/.claude/homunculus/**/evolved/skills/*/SKILL.md → source="evolved"
   4. ~/.claude/homunculus/projects/*/instincts/personal/*.yaml → source="instinct"
 
-The pattern-detector agent reads this index instead of re-scanning ~1000
-files every tick — turns dedupe into an O(n) hash lookup with consistent
-keyword matching across runs.
+Two consumer paths:
+  - pattern-detector: reads `tokens` for dedupe.
+  - skill-suggest:    reads `idf` + `tokens` + `suggestable` for prompt
+                      matching at UserPromptSubmit hook time.
 
-Skipped: ~/.claude/plugins/cache/** (duplicates marketplaces).
+`suggestable=false` for operational skills that should not be auto-suggested
+(dashboards, session ops, schedulers — they don't solve user problems).
+
+Skipped: ~/.claude/plugins/cache/** (duplicates marketplaces) and any
+non-canonical localized/IDE-specific copies (docs/zh-CN/, .agents/, .cursor/,
+.kiro/, examples/) — a heavily-localized skill is otherwise over-counted and
+its IDF is skewed.
 """
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sys
@@ -51,21 +63,119 @@ _STOPWORDS = {
 
 _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{2,}")
 
+# Operational skills whose slugs should never be auto-suggested by the
+# UserPromptSubmit skill-suggest hook. They're commands, not problem-solvers.
+#
+# Two sets:
+#   exact:  full-slug match (e.g. `dashboard`, but NOT `dashboard-builder`)
+#   prefix: slug starts with `<pfx>-` (e.g. `ping-` blocks `ping-forge`)
+#
+# Anything else with `source=marketplace` is suggestable. Skills like
+# `dashboard-builder`, `skill-stocktake`, `security-review`, `ai-regression-testing`
+# are NOT filtered — those teach how to do things.
+_NONSUGGESTABLE_EXACT = {
+    "dashboard",
+    "skill-report",
+    "skill-health",
+    "watch-and-learn",
+    "sessions",
+    "save-session",
+    "resume-session",
+    "loop",
+    "schedule",
+    "aside",
+    "configure-ecc",
+    "init",
+    "review",  # built-in /review command, ambiguous noise
+    "team-builder",  # interactive picker, operational
+    "promote",
+    "evolve",
+    "prune",
+    "projects",
+    "instinct-import",
+    "instinct-export",
+    "instinct-status",
+    "agent-sort",  # produces install plans, not problem-solving
+}
+
+_NONSUGGESTABLE_PREFIXES = (
+    "ping-",   # ping-forge etc.
+    "hookify-",  # hookify-list/configure/help — operational
+)
+
+# Marketplace checkouts ship the same SKILL.md many times: localized doc copies
+# (docs/zh-CN/, docs/ja-JP/, …) and IDE-specific copies (.agents/, .cursor/, .kiro/).
+# Index only the canonical English copy — a path with any of these segments above
+# the skill dir is a non-canonical duplicate (otherwise a heavily-localized popular
+# skill is over-counted and its IDF is skewed).
+_NONCANONICAL_SEGMENTS = {"docs", ".agents", ".cursor", ".kiro", "examples"}
+
+
+def _is_noncanonical(path: Path) -> bool:
+    return any(seg in _NONCANONICAL_SEGMENTS for seg in path.parts)
+
+
+def _is_suggestable(slug: str, source: str) -> bool:
+    """Return False for operational/command skills that shouldn't auto-suggest.
+
+    Rule: only `marketplace` source is suggestable, and the slug must not
+    appear in the exact-deny set or start with a deny prefix.
+    `learned`/`evolved`/`instinct` are user-private and might be experimental —
+    keep them out of suggestions until promoted to marketplace.
+    """
+    if source != "marketplace":
+        return False
+    s = slug.lower()
+    if s in _NONSUGGESTABLE_EXACT:
+        return False
+    for pfx in _NONSUGGESTABLE_PREFIXES:
+        if s.startswith(pfx):
+            return False
+    return True
+
+
+def _namespace_from_path(path: Path) -> str:
+    """Derive plugin namespace from SKILL.md path.
+
+    For ~/.claude/plugins/marketplaces/<plugin>/skills/<skill>/SKILL.md
+    the plugin name is the directory two levels up from `skills/`.
+    Returns empty string if not a plugin path (learned/evolved/instinct).
+    """
+    parts = path.parts
+    if "marketplaces" in parts:
+        i = parts.index("marketplaces")
+        if i + 1 < len(parts):
+            return parts[i + 1]
+    return ""
+
 
 def _tokenize(text: str) -> list[str]:
-    """Lowercase content tokens, length >= 4, not in stop-list, deduped."""
+    """Lowercase content tokens, length >= 3, not in stop-list, deduped.
+
+    Length >= 3 to retain technical acronyms (jwt, api, sql, ssh, dns, css,
+    ide, sdk, npm, mcp). The stop-list excludes English connectives so noise
+    is bounded.
+
+    Compound tokens (hyphen-separated, e.g. `golang-patterns`) are emitted
+    BOTH as the original compound (for exact slug matching) AND as their
+    individual components (so prompt token `golang` matches a skill whose
+    only relevant token is `golang-patterns`).
+    """
     out: list[str] = []
     seen: set[str] = set()
-    for m in _TOKEN_RE.finditer(text or ""):
-        t = m.group(0).lower()
-        if len(t) < 4:
-            continue
-        if t in _STOPWORDS:
-            continue
-        if t in seen:
-            continue
+
+    def _add(t: str) -> None:
+        if len(t) < 3 or t in _STOPWORDS or t in seen:
+            return
         seen.add(t)
         out.append(t)
+
+    for m in _TOKEN_RE.finditer(text or ""):
+        t = m.group(0).lower()
+        _add(t)
+        if "-" in t or "_" in t:
+            for part in re.split(r"[-_]", t):
+                _add(part)
     return out
 
 
@@ -94,18 +204,6 @@ def _parse_frontmatter(text: str) -> dict:
     return out
 
 
-# Marketplace checkouts ship the same SKILL.md many times: localized doc copies
-# (docs/zh-CN/, docs/ja-JP/, …) and IDE-specific copies (.agents/, .cursor/, .kiro/).
-# Index only the canonical English copy — a path with any of these segments above
-# the skill dir is a non-canonical duplicate (otherwise a heavily-localized popular
-# skill is over-counted and its IDF is skewed).
-_NONCANONICAL_SEGMENTS = {"docs", ".agents", ".cursor", ".kiro", "examples"}
-
-
-def _is_noncanonical(path: Path) -> bool:
-    return any(seg in _NONCANONICAL_SEGMENTS for seg in path.parts)
-
-
 def _index_skill_md(path: Path, source: str) -> dict | None:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -116,12 +214,17 @@ def _index_skill_md(path: Path, source: str) -> dict | None:
     description = fm.get("description", "")
     if not name:
         return None
+    slug = (name or path.parent.name).lower()
+    plugin = _namespace_from_path(path) if source == "marketplace" else ""
+    namespaced = f"{plugin}:{name}" if plugin else name
     return {
-        "slug": (name or path.parent.name).lower(),
+        "slug": slug,
         "name": name,
+        "namespaced_slug": namespaced,
         "description": description[:400],
         "tokens": _tokenize(name + " " + description)[:30],
         "source": source,
+        "suggestable": _is_suggestable(slug, source),
         "path": str(path),
     }
 
@@ -139,13 +242,36 @@ def _index_instinct_yaml(path: Path) -> dict | None:
             fm[m.group(1)] = v
     name = fm.get("id") or path.stem
     trigger = fm.get("trigger", "")
+    slug = name.lower()
     return {
-        "slug": name.lower(),
+        "slug": slug,
         "name": name,
+        "namespaced_slug": name,  # instincts have no plugin namespace
         "description": trigger[:400],
         "tokens": _tokenize(name + " " + trigger)[:30],
         "source": "instinct",
+        "suggestable": False,  # instincts are private/experimental
         "path": str(path),
+    }
+
+
+def _compute_idf(skills: list[dict]) -> dict[str, float]:
+    """BM25-style IDF: idf[t] = log((N - df + 0.5) / (df + 0.5) + 1).
+
+    Computed only over `suggestable` skills so common operational tokens
+    (e.g. "dashboard", "session") don't deflate IDF for problem-solving skills.
+    """
+    suggestable = [s for s in skills if s.get("suggestable")]
+    n = len(suggestable)
+    if n == 0:
+        return {}
+    df: dict[str, int] = {}
+    for s in suggestable:
+        for t in set(s.get("tokens", [])):
+            df[t] = df.get(t, 0) + 1
+    return {
+        t: round(math.log((n - d + 0.5) / (d + 0.5) + 1.0), 4)
+        for t, d in df.items()
     }
 
 
@@ -186,9 +312,14 @@ def main(argv: list[str]) -> int:
         for p in homunc.rglob("instincts/personal/*.yaml"):
             _add(_index_instinct_yaml(p))
 
+    idf = _compute_idf(skills)
+    suggestable_count = sum(1 for s in skills if s.get("suggestable"))
+
     payload = {
         "built_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "skill_count": len(skills),
+        "suggestable_count": suggestable_count,
+        "idf": idf,
         "skills": skills,
     }
 
@@ -196,7 +327,11 @@ def main(argv: list[str]) -> int:
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    print(f"build_ecc_index: wrote {out_path} (skill_count={len(skills)})")
+    print(
+        f"build_ecc_index: wrote {out_path} "
+        f"(skill_count={len(skills)}, suggestable={suggestable_count}, "
+        f"idf_terms={len(idf)})"
+    )
     return 0
 
 
