@@ -332,6 +332,30 @@ def _parse_frontmatter(text: str) -> dict:
     return out
 
 
+def _load_description_overrides() -> dict[str, dict]:
+    """Read learning/skill-description-overrides.json (next to this file).
+
+    Returns {} if the file is missing/unparseable — overrides are optional
+    and a corrupt overrides file should never wedge the indexer.
+
+    Used as a stopgap when an upstream marketplace SKILL.md needs a richer
+    description than what's published, before the upstream PR merges. Each
+    entry must carry its upstream PR link and a `remove_when` note so stale
+    overrides are easy to audit out.
+    """
+    overrides_path = Path(__file__).parent / "skill-description-overrides.json"
+    if not overrides_path.is_file():
+        return {}
+    try:
+        raw = json.loads(overrides_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {k: v for k, v in raw.items() if not k.startswith("_") and isinstance(v, dict)}
+
+
+_DESCRIPTION_OVERRIDES: dict[str, dict] = _load_description_overrides()
+
+
 def _index_skill_md(path: Path, source: str) -> dict | None:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -345,6 +369,12 @@ def _index_skill_md(path: Path, source: str) -> dict | None:
     slug = (name or path.parent.name).lower()
     plugin = _namespace_from_path(path) if source == "marketplace" else ""
     namespaced = f"{plugin}:{name}" if plugin else name
+    # Apply override if registered for this namespaced_slug. Overrides win
+    # over the upstream description and the original is forgotten (it would
+    # be confusing to keep both fields, and only `description` feeds IDF).
+    override = _DESCRIPTION_OVERRIDES.get(namespaced)
+    if override and "description" in override:
+        description = override["description"]
     return {
         "slug": slug,
         "name": name,

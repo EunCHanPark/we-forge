@@ -1,0 +1,23 @@
+{
+  "_README": [
+    "skill-description-overrides.json — stopgap layer for description enrichments",
+    "we want applied locally before upstream marketplace PRs merge.",
+    "",
+    "When build_ecc_index.py parses a SKILL.md frontmatter, if the skill's",
+    "namespaced_slug appears here as a key, the override description is used",
+    "instead of the upstream description for tokenization + IDF.",
+    "",
+    "RULE: each entry MUST track its corresponding upstream PR. When the PR",
+    "merges (and the marketplace cache picks up the new description), DELETE",
+    "the override entry — leaving stale overrides defeats the point.",
+    "",
+    "Entries are sorted by upstream PR number for easy auditing."
+  ],
+
+  "everything-claude-code:canary-watch": {
+    "description": "Use this skill to monitor and verify a deployed URL after releases — checks HTTP endpoints, SSE streams, static assets, console errors, and performance regressions after deploys, merges, or dependency upgrades. Smoke / canary / post-deploy verification.",
+    "upstream_pr": "https://github.com/affaan-m/everything-claude-code/pull/1910",
+    "added": "2026-05-15",
+    "remove_when": "PR #1910 merges and marketplace clone autopull picks up the new description"
+  }
+}
