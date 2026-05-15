@@ -63,6 +63,13 @@ _STOPWORDS = {
 
 _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{2,}")
 
+# Per-skill token cap for the index. Higher = more match surface for
+# skill-suggest. Bumped from 30 → 40 on 2026-05-15 because the new ko↔en
+# synonym expansion in `_tokenize()` was pushing 29% of marketplace skills
+# (73/254) into cap-saturation, displacing meaningful English tokens with
+# their Korean equivalents. Index size impact: ~25 KB, negligible.
+_TOKEN_CAP = 40
+
 # Hangul-syllable run (2+ syllables). Single-syllable Korean tokens (e.g. "팟",
 # "앱") are almost always particles or fragments; words of meaning are ≥2.
 _HANGUL_RE = re.compile(r"[가-힣]{2,}")
@@ -343,7 +350,7 @@ def _index_skill_md(path: Path, source: str) -> dict | None:
         "name": name,
         "namespaced_slug": namespaced,
         "description": description[:400],
-        "tokens": _tokenize(name + " " + description)[:30],
+        "tokens": _tokenize(name + " " + description)[:_TOKEN_CAP],
         "source": source,
         "suggestable": _is_suggestable(slug, source),
         "path": str(path),
@@ -369,7 +376,7 @@ def _index_instinct_yaml(path: Path) -> dict | None:
         "name": name,
         "namespaced_slug": name,  # instincts have no plugin namespace
         "description": trigger[:400],
-        "tokens": _tokenize(name + " " + trigger)[:30],
+        "tokens": _tokenize(name + " " + trigger)[:_TOKEN_CAP],
         "source": "instinct",
         "suggestable": False,  # instincts are private/experimental
         "path": str(path),
