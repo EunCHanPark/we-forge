@@ -6,6 +6,53 @@ All notable changes to we-forge are documented in this file. Format follows
 
 ## [Unreleased]
 
+## [0.5.4] — 2026-05-15 | ranking-gap fixes — tdd-workflow + design-system
+
+Closed two real ranking gaps that were surfaced during v0.5.3 anchor
+baselining: prompts that should have surfaced their natural skill were
+losing to weakly-related skills with broader token surface.
+
+### Fixed
+
+- **`test driven development write tests first then implement`** —
+  before: `claude-plugins-official:hook-development` (score 14.69) ←
+  after: `everything-claude-code:tdd-workflow` (score 22.32).
+- **`한국어 디자인 시스템 컴포넌트`** —
+  before: `everything-claude-code:angular-developer` (score 8.42) ←
+  after: `everything-claude-code:design-system` (score 32.32).
+  Overlap: `component, design, system, 디자인, 시스템, 컴포넌트` — full
+  bilingual path active.
+
+### Three coordinated changes (commit `c2ae348`)
+
+- **KO_EN_SYNONYMS +5 entries** mirrored across Python and Rust per the
+  tokenizer parity invariant:
+  - `디자인 → design`
+  - `시스템 → system`
+  - `스타일 → style, styling`
+  - `일관성 → consistency`
+  - `비주얼 → visual`
+
+- **`learning/skill-description-overrides.json` +2 entries**:
+  - `everything-claude-code:tdd-workflow` — adds "test-first methodology",
+    "red-green-refactor", explicit "write tests first then implement"
+    phrasing.
+  - `everything-claude-code:design-system` — adds "components, tokens,
+    UI library, style guide, branding" + Korean phrasing anchor.
+  Both marked `upstream_pr: none — local-only enrichment` (vs. canary-watch
+  which is waiting on PR #1910).
+
+- **`learning/skill-suggest-regressions.json` +2 anchors**:
+  `en-tdd-workflow` and `ko-design-system`. The weekly regression check
+  will now catch any future drift that breaks these mappings.
+
+### Numbers
+
+- Regression anchors: 10 → **12** (all passing)
+- KO_EN_SYNONYMS entries: 67 → **72** (Python + Rust in lockstep)
+- IDF terms in index: 2547 → **2559**
+- Description overrides: 1 → **3**
+
 ## [0.5.3] — 2026-05-15 | active ECC adaptation — coverage / candidates / regressions / weekly tick
 
 The companion release to 0.5.2. Where 0.5.2 made matching work for Korean
