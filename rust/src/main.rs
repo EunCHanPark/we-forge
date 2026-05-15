@@ -175,6 +175,19 @@ enum Cmd {
         #[arg(long, default_value_t = 0)]
         hours: i64,
     },
+
+    /// Find English tokens in marketplace skill descriptions that have NO
+    /// Korean alias mapped in KO_EN_SYNONYMS. High-frequency uncovered tokens
+    /// are good candidates for new ko→en dictionary entries. Symmetric to
+    /// `synonym-candidates`: that one is demand-side, this is supply-side.
+    SynonymCoverage {
+        /// Show only the top-N most frequent uncovered tokens.
+        #[arg(long, default_value_t = 30)]
+        top: usize,
+        /// Require the token to appear in at least N distinct skills.
+        #[arg(long, default_value_t = 3)]
+        min_skills: usize,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -231,5 +244,6 @@ fn main() -> anyhow::Result<()> {
         } => cli::skill_suggest::run(&prompt, top, inject, log, &session_id),
         Cmd::SkillHits { hours } => cli::skill_hits::run(hours),
         Cmd::SynonymCandidates { top, hours } => cli::synonym_candidates::run(top, hours),
+        Cmd::SynonymCoverage { top, min_skills } => cli::synonym_coverage::run(top, min_skills),
     }
 }
