@@ -882,25 +882,113 @@ pub mod skill_suggest {
         "if","you","your","use","used",
     ];
 
+    // Korean → English synonym map mirrored from learning/build_ecc_index.py.
+    // When a Korean token appears in the prompt, the English equivalents are
+    // also emitted so a Korean-only prompt can match a skill whose description
+    // is English-only. Keep entries small and high-precision.
+    const KO_EN_SYNONYMS: &[(&str, &[&str])] = &[
+        ("검증", &["verify", "verification"]),
+        ("검사", &["check", "inspection"]),
+        ("확인", &["verify", "check"]),
+        ("배포", &["deploy", "deployment", "release"]),
+        ("릴리즈", &["release"]),
+        ("회귀", &["regression"]),
+        ("엔드포인트", &["endpoint"]),
+        ("정적", &["static"]),
+        ("자산", &["asset"]),
+        ("모니터", &["monitor", "monitoring"]),
+        ("모니터링", &["monitor", "monitoring"]),
+        ("테스트", &["test", "testing"]),
+        ("보안", &["security", "secure"]),
+        ("성능", &["performance"]),
+        ("리뷰", &["review"]),
+        ("코드리뷰", &["review", "code"]),
+        ("쿼리", &["query"]),
+        ("스키마", &["schema"]),
+        ("마이그레이션", &["migration"]),
+        ("개발", &["development", "dev"]),
+        ("프롬프트", &["prompt"]),
+        ("에이전트", &["agent"]),
+        ("스킬", &["skill"]),
+        ("워크플로", &["workflow"]),
+        ("워크플로우", &["workflow"]),
+        ("디버그", &["debug", "debugging"]),
+        ("디버깅", &["debug", "debugging"]),
+        ("패턴", &["pattern"]),
+        ("색인", &["index", "indexing"]),
+        ("인덱스", &["index"]),
+        ("로그", &["log", "logging"]),
+        ("리팩토링", &["refactor", "refactoring"]),
+        ("최적화", &["optimization", "optimize"]),
+        ("캐시", &["cache", "caching"]),
+        ("데이터베이스", &["database"]),
+        ("데이터", &["data"]),
+        ("프론트엔드", &["frontend"]),
+        ("백엔드", &["backend"]),
+        ("도커", &["docker"]),
+        ("컨테이너", &["container"]),
+        ("빌드", &["build"]),
+        ("린트", &["lint", "linting"]),
+        ("린터", &["linter"]),
+        ("타입", &["type"]),
+        ("함수", &["function"]),
+        ("컴포넌트", &["component"]),
+        ("라이브러리", &["library"]),
+        ("프레임워크", &["framework"]),
+        ("문서", &["documentation", "docs"]),
+        ("발표", &["presentation", "slide"]),
+        ("슬라이드", &["slide", "presentation"]),
+        ("그래프", &["graph"]),
+        ("노트", &["note"]),
+        ("지식", &["knowledge"]),
+        ("기억", &["memory"]),
+        ("메모리", &["memory"]),
+        ("세션", &["session"]),
+        ("이메일", &["email", "mail"]),
+        ("메일", &["mail", "email"]),
+        ("결제", &["billing", "payment"]),
+        ("청구", &["billing"]),
+        ("환불", &["refund"]),
+        ("고객", &["customer"]),
+        ("재고", &["inventory"]),
+        ("물류", &["logistics", "shipping"]),
+        ("반품", &["return"]),
+    ];
+
+    /// True if char is in the Hangul syllable block (가-힣).
+    fn is_hangul(c: char) -> bool {
+        ('\u{AC00}'..='\u{D7A3}').contains(&c)
+    }
+
     fn tokenize(text: &str) -> Vec<String> {
-        // Equivalent of Python regex r"[A-Za-z][A-Za-z0-9_-]{2,}", lowercase.
-        // Light suffix strip for plurals/-ing. Order preserved, deduped.
+        // Two parallel token streams:
+        //   1. ASCII alpha runs (existing behavior; suffix-strips plurals/-ing)
+        //   2. Hangul syllable runs (≥2 syllables) — new
+        // Korean tokens are also expanded via KO_EN_SYNONYMS so a Korean-only
+        // prompt can hit English-only skill descriptions.
         let stops: HashSet<&str> = STOPWORDS.iter().copied().collect();
         let mut seen: HashSet<String> = HashSet::new();
         let mut out: Vec<String> = Vec::new();
 
-        let bytes = text.as_bytes();
+        let push = |t: String, seen: &mut HashSet<String>, out: &mut Vec<String>| {
+            if !seen.contains(&t) {
+                seen.insert(t.clone());
+                out.push(t);
+            }
+        };
+
+        let chars: Vec<char> = text.chars().collect();
         let mut i = 0;
-        while i < bytes.len() {
-            let c = bytes[i];
+        while i < chars.len() {
+            let c = chars[i];
             if c.is_ascii_alphabetic() {
                 let start = i;
                 i += 1;
-                while i < bytes.len() {
-                    let b = bytes[i];
-                    if b.is_ascii_alphanumeric() || b == b'_' || b == b'-' { i += 1; } else { break; }
+                while i < chars.len() {
+                    let b = chars[i];
+                    if b.is_ascii_alphanumeric() || b == '_' || b == '-' { i += 1; } else { break; }
                 }
-                let raw = &text[start..i];
+                let raw: String = chars[start..i].iter().collect();
                 let t: String = raw.to_ascii_lowercase();
                 if t.len() < 3 || stops.contains(t.as_str()) { continue; }
                 let pushed: String = if t.len() > 5 && t.ends_with("ing") {
@@ -914,9 +1002,20 @@ pub mod skill_suggest {
                 } else {
                     t
                 };
-                if !seen.contains(&pushed) {
-                    seen.insert(pushed.clone());
-                    out.push(pushed);
+                push(pushed, &mut seen, &mut out);
+            } else if is_hangul(c) {
+                let start = i;
+                i += 1;
+                while i < chars.len() && is_hangul(chars[i]) { i += 1; }
+                let ko: String = chars[start..i].iter().collect();
+                if ko.chars().count() < 2 { continue; }
+                // Emit the Korean token itself.
+                push(ko.clone(), &mut seen, &mut out);
+                // Synonym expansion: add English equivalents.
+                if let Some(&(_, engs)) = KO_EN_SYNONYMS.iter().find(|(k, _)| *k == ko.as_str()) {
+                    for eng in engs {
+                        push((*eng).to_string(), &mut seen, &mut out);
+                    }
                 }
             } else {
                 i += 1;

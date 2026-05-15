@@ -63,6 +63,87 @@ _STOPWORDS = {
 
 _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{2,}")
 
+# Hangul-syllable run (2+ syllables). Single-syllable Korean tokens (e.g. "팟",
+# "앱") are almost always particles or fragments; words of meaning are ≥2.
+_HANGUL_RE = re.compile(r"[가-힣]{2,}")
+
+# Korean ↔ English synonym map used at index-build time AND at query-time
+# (Rust matcher mirrors this list). Keys are Korean tokens that appear in
+# real user prompts; values are English equivalents that already appear in
+# ECC skill descriptions. We expand BOTH ways:
+#   - in a SKILL description containing "deploy", we also stash "배포" as a
+#     token, so a Korean prompt can match it without any English overlap.
+#   - in a prompt containing "배포", the Rust query expander adds "deploy".
+# Keep entries small and high-precision; ambiguous words cause false matches.
+_KO_EN_SYNONYMS: dict[str, list[str]] = {
+    "검증": ["verify", "verification"],
+    "검사": ["check", "inspection"],
+    "확인": ["verify", "check"],
+    "배포": ["deploy", "deployment", "release"],
+    "릴리즈": ["release"],
+    "회귀": ["regression"],
+    "엔드포인트": ["endpoint"],
+    "정적": ["static"],
+    "자산": ["asset"],
+    "모니터": ["monitor", "monitoring"],
+    "모니터링": ["monitor", "monitoring"],
+    "테스트": ["test", "testing"],
+    "보안": ["security", "secure"],
+    "성능": ["performance"],
+    "리뷰": ["review"],
+    "코드리뷰": ["review", "code"],
+    "쿼리": ["query"],
+    "스키마": ["schema"],
+    "마이그레이션": ["migration"],
+    "개발": ["development", "dev"],
+    "프롬프트": ["prompt"],
+    "에이전트": ["agent"],
+    "스킬": ["skill"],
+    "워크플로": ["workflow"],
+    "워크플로우": ["workflow"],
+    "디버그": ["debug", "debugging"],
+    "디버깅": ["debug", "debugging"],
+    "패턴": ["pattern"],
+    "색인": ["index", "indexing"],
+    "인덱스": ["index"],
+    "로그": ["log", "logging"],
+    "리팩토링": ["refactor", "refactoring"],
+    "최적화": ["optimization", "optimize"],
+    "캐시": ["cache", "caching"],
+    "데이터베이스": ["database"],
+    "데이터": ["data"],
+    "프론트엔드": ["frontend"],
+    "백엔드": ["backend"],
+    "도커": ["docker"],
+    "컨테이너": ["container"],
+    "빌드": ["build"],
+    "린트": ["lint", "linting"],
+    "린터": ["linter"],
+    "타입": ["type"],
+    "함수": ["function"],
+    "컴포넌트": ["component"],
+    "라이브러리": ["library"],
+    "프레임워크": ["framework"],
+    "문서": ["documentation", "docs"],
+    "발표": ["presentation", "slide"],
+    "슬라이드": ["slide", "presentation"],
+    "그래프": ["graph"],
+    "노트": ["note"],
+    "지식": ["knowledge"],
+    "기억": ["memory"],
+    "메모리": ["memory"],
+    "세션": ["session"],
+    "이메일": ["email", "mail"],
+    "메일": ["mail", "email"],
+    "결제": ["billing", "payment"],
+    "청구": ["billing"],
+    "환불": ["refund"],
+    "고객": ["customer"],
+    "재고": ["inventory"],
+    "물류": ["logistics", "shipping"],
+    "반품": ["return"],
+}
+
 # Operational skills whose slugs should never be auto-suggested by the
 # UserPromptSubmit skill-suggest hook. They're commands, not problem-solvers.
 #
@@ -160,22 +241,62 @@ def _tokenize(text: str) -> list[str]:
     BOTH as the original compound (for exact slug matching) AND as their
     individual components (so prompt token `golang` matches a skill whose
     only relevant token is `golang-patterns`).
+
+    Hangul runs (`_HANGUL_RE`, ≥2 syllables) are emitted as their own tokens.
+    When a Korean token has an entry in `_KO_EN_SYNONYMS`, the English
+    equivalents are also emitted — this lets a Korean-only prompt match a
+    skill whose description is English-only (and vice-versa, since the
+    indexer runs this same function on every skill description).
     """
     out: list[str] = []
     seen: set[str] = set()
 
-    def _add(t: str) -> None:
-        if len(t) < 3 or t in _STOPWORDS or t in seen:
+    def _add(t: str, min_len: int = 3) -> None:
+        if len(t) < min_len or t in _STOPWORDS or t in seen:
             return
         seen.add(t)
         out.append(t)
 
+    # ASCII alphanumeric tokens (existing behavior)
     for m in _TOKEN_RE.finditer(text or ""):
         t = m.group(0).lower()
         _add(t)
         if "-" in t or "_" in t:
             for part in re.split(r"[-_]", t):
                 _add(part)
+
+    # Hangul runs — min 2 syllables (each syllable ≥ 3 bytes in UTF-8)
+    for m in _HANGUL_RE.finditer(text or ""):
+        ko = m.group(0)
+        _add(ko, min_len=2)
+        # Synonym expansion: emit English equivalents too
+        for eng in _KO_EN_SYNONYMS.get(ko, ()):
+            _add(eng)
+
+    # Reverse-direction synonym expansion: if an English token in the result
+    # has a Korean key in _KO_EN_SYNONYMS, emit the Korean too. This way a
+    # canary-watch description containing "deploy" also gets indexed as "배포".
+    # Plural-strip variants are tried because skill descriptions naturally
+    # contain "endpoints" / "regressions" / "deploys", but the synonym map
+    # keys the singular form.
+    en_to_ko: dict[str, list[str]] = {}
+    for ko, engs in _KO_EN_SYNONYMS.items():
+        for eng in engs:
+            en_to_ko.setdefault(eng, []).append(ko)
+    for tok in list(out):
+        variants = [tok]
+        if tok.endswith("ies") and len(tok) > 5:
+            variants.append(tok[:-3] + "y")
+        elif tok.endswith("es") and len(tok) > 5:
+            variants.append(tok[:-2])
+        elif tok.endswith("s") and not tok.endswith("ss") and len(tok) > 4:
+            variants.append(tok[:-1])
+        elif tok.endswith("ing") and len(tok) > 5:
+            variants.append(tok[:-3])
+        for v in variants:
+            for ko in en_to_ko.get(v, ()):
+                _add(ko, min_len=2)
+
     return out
 
 
