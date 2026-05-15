@@ -6,6 +6,73 @@ All notable changes to we-forge are documented in this file. Format follows
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-05-15 | Korean-aware skill-suggest + description-override layer + supervisor
+
+### New features
+
+- **Hangul-aware skill-suggest tokenizer + ko↔en synonym map** (`61bf667`).
+  Both the Python indexer (`learning/build_ecc_index.py`) and the Rust matcher
+  (`rust/src/cli.rs` `skill_suggest::tokenize`) now extract Hangul syllable
+  runs (≥2 syllables) and expand them through a 67-entry Korean→English
+  synonym dictionary in both directions. Korean-only prompts now match
+  English-only marketplace descriptions and vice-versa.
+
+  Before/after on the original failing prompt:
+
+  | Prompt | Before | After |
+  |---|---|---|
+  | Korean+English mix | canary-watch **5.12 (#2)** | canary-watch **22.02 (#1)** |
+  | Pure Korean | 0 matches | 5 matches |
+  | English control | 14.84 | 33.69 (description enrichment effect) |
+
+  **Tokenizer parity is an invariant** — any change to one tokenizer must
+  mirror across both files. See project memory
+  `feedback_skill_suggest_tokenizer_parity.md`.
+
+- **Description override layer** (`ed694a1`). New `learning/skill-description-overrides.json`
+  carries stopgap description enrichments for marketplace skills before their
+  upstream PRs merge. Applied at index-build time; the marketplace clone stays
+  byte-clean so `git pull --ff-only` always works. Each entry must carry an
+  `upstream_pr` link + a `remove_when` note so audit-out is mechanical once
+  upstream lands. Seeded with one entry: `everything-claude-code:canary-watch`
+  (upstream PR [affaan-m/everything-claude-code#1910](https://github.com/affaan-m/everything-claude-code/pull/1910)).
+
+- **Synonym learning loop** (`a1bc982`). When a prompt contains Korean tokens
+  that are not in `KO_EN_SYNONYMS` and the top suggestion scores below 5.0,
+  the unknown tokens are appended to `~/.we-forge/synonym-candidates.jsonl`.
+  A new `we-forgectl synonym-candidates [--top N] [--hours N]` subcommand
+  aggregates and ranks them so the dictionary grows from real usage rather
+  than guesswork. Logging is best-effort and silently swallowed on I/O
+  failure — learning telemetry never wedges a hook injection.
+
+- **Dead-man supervisor for hung daemon detection** (`6aeec73`). New
+  `ops/supervisor.sh` + `ops/com.we-forge.supervisor.plist` (launchd) detect
+  daemon hang in two shapes: `tick begin` > 30 min without a matching
+  `tick end`, OR no new `tick begin` for > 6.5 h (interval + margin).
+  Detection escalates SIGTERM → SIGKILL after 5 s and lets launchd
+  `KeepAlive=true` restart the daemon. Quiet on normal runs.
+
+### Changed
+
+- **Per-skill token cap 30 → 40** (`dc54e42`). After Korean synonym expansion
+  started competing for index slots, 73/254 marketplace skills (29%) were
+  saturating the previous cap, displacing meaningful English tokens with
+  their Korean equivalents. The bump dropped saturation to 19/254 (−74%);
+  IDF terms grew 2459 → 2547; index size delta ~25 KB.
+
+### Migration
+
+If you maintain a local fork of `~/.local/bin/we-forgectl`, rebuild after
+upgrading:
+
+    cd rust && cargo build --release
+    cp target/release/we-forgectl ~/.local/bin/we-forgectl
+    codesign --force --sign - ~/.local/bin/we-forgectl
+    xattr -cr ~/.local/bin/we-forgectl
+
+The codesign + xattr clear is mandatory on macOS — without it, the freshly
+copied binary is killed by Gatekeeper with SIGKILL (exit 137) on first run.
+
 ## [0.5.1] — 2026-05-14 | skill-suggest ECC status announcement
 
 ### Changed
