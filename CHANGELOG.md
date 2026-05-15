@@ -6,6 +6,81 @@ All notable changes to we-forge are documented in this file. Format follows
 
 ## [Unreleased]
 
+## [0.5.5] — 2026-05-15 | skill-finder agent — LLM fallback for skill resolution
+
+Fills the architectural gap surfaced during v0.5.4: we-forge had agents
+for LEARNING and OPERATIONS but no agent for FINDING the right existing
+skill against a user request. The BM25 CLI (`we-forgectl skill-suggest`)
+covered the fast deterministic path; nothing covered the cases where
+BM25 fails — heavily Korean prompts with attached particles, semantically
+implicit intents, morphologically rich phrasing.
+
+### New
+
+- **`skill-finder` agent** (commit `4bd21ef`, `agents/skill-finder.md`).
+  Haiku-model agent. Reads a user prompt + top-20 BM25 candidate skills
+  (and optionally `~/.we-forge/ecc-index.json` directly for deeper
+  lookups) and returns 1–3 best fits with one-line rationale via
+  semantic reasoning. Honest `no_match` is a valid output — confidence-
+  calibrated, no slug invention.
+
+  Read-only (Read + Bash tools). ~$0.001 per call. Korean is native
+  input — handles 조사 (검정화면**으로** → 검정화면) and 활용형
+  (가져왔는지 → 가져오다) without external preprocessing.
+
+- **`/find-skill` slash command** (`commands/find-skill.md`).
+  User-triggered foreground path. Flow: BM25 baseline → dispatch
+  agent → present verdict → offer to invoke top pick via `Skill()`
+  (requires confirmation, never auto-executes).
+
+- **`install.sh` patches**. Both agent and command added to the
+  install loops, so fresh installs pick them up.
+
+### Architecture note
+
+The skill-finder agent is the QUERY-time LLM fallback (~$0.001 per call,
+sometimes per day). It is NOT in the `UserPromptSubmit` hook hot path —
+that stays BM25-fast (< 10 ms, $0). Three planned trigger paths:
+
+  1. ✅ Manual `/find-skill <prompt>` (this release)
+  2. 🔜 Async fallback from skill-suggest when top score < 5.0 (Rust
+        edit, future EP)
+  3. 🔜 Weekly batch on `synonym-candidates.jsonl` curating new ko↔en
+        mappings (tick.sh edit, future EP)
+
+### Motivating case
+
+> *"접속시 검정화면으로 아무것도 보이지 않음"*
+
+Five Korean tokens, all missing from `KO_EN_SYNONYMS`, all with
+attached particles. BM25 returns 0 matches. The agent should
+semantically reason this is a deploy-time blank-screen issue and
+recommend `everything-claude-code:browser-qa` /
+`everything-claude-code:canary-watch` / `everything-claude-code:vite-patterns`.
+
+To smoke it: start a fresh Claude Code session in this repo and type
+`/find-skill "접속시 검정화면으로 아무것도 보이지 않음"`. The current
+session's Agent tool list is fixed at startup, so the new agent
+appears only in subsequent sessions.
+
+### Migration
+
+If you maintain a local fork of `~/.local/bin/we-forgectl`, no rebuild
+is strictly necessary for this release (no Rust changes), but the
+version field bumped to 0.5.5 for tracking. To sync version reporting:
+
+    cd rust && cargo build --release
+    cp target/release/we-forgectl ~/.local/bin/we-forgectl
+    codesign --force --sign - ~/.local/bin/we-forgectl
+    xattr -cr ~/.local/bin/we-forgectl
+
+To activate the new agent + command in an existing install (no
+reinstall needed — they were copied during this release work, but for
+fresh installs run `./install.sh` again):
+
+    cp agents/skill-finder.md ~/.claude/agents/
+    cp commands/find-skill.md ~/.claude/commands/
+
 ## [0.5.4] — 2026-05-15 | ranking-gap fixes — tdd-workflow + design-system
 
 Closed two real ranking gaps that were surfaced during v0.5.3 anchor
