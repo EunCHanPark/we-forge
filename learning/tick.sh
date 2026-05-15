@@ -386,7 +386,85 @@ PYEOF
     _log "promotion queue empty; no claude invocation"
   fi
 
+  # Weekly skill-suggest ranking regression check (independent of orchestrator).
+  # Catches IDF drift / tokenizer regressions / stale override entries that
+  # silently break a previously-working anchor prompt → skill mapping.
+  _run_skill_regressions_if_due
+
   _log "tick end"
+}
+
+# Run we-forgectl skill-regressions when last run > 7 days ago (or never).
+# On failure, send a Telegram alert (best-effort, mirroring notifier agent
+# pattern). The marker is touched on every run regardless of rc so a
+# persistent failure doesn't generate weekly spam — one alert per cycle.
+_run_skill_regressions_if_due() {
+  local marker="${WE_FORGE_HOME:-$HOME/.we-forge}/.last-skill-regressions"
+  local cooldown_seconds=604800   # 7 days
+  local now last_mtime should_run=0
+  now="$(date +%s)"
+  if [ ! -f "$marker" ]; then
+    should_run=1
+  else
+    if stat -f%m "$marker" >/dev/null 2>&1; then
+      last_mtime="$(stat -f%m "$marker")"
+    else
+      last_mtime="$(stat -c%Y "$marker" 2>/dev/null)"
+    fi
+    [ $(( now - ${last_mtime:-0} )) -ge "$cooldown_seconds" ] && should_run=1
+  fi
+  [ "$should_run" != "1" ] && return 0
+
+  local wfctl="$HOME/.local/bin/we-forgectl"
+  if [ ! -x "$wfctl" ]; then
+    _log "skill-regressions: we-forgectl binary not at $wfctl — skipping"
+    return 0
+  fi
+
+  local out rc
+  out="$("$wfctl" skill-regressions 2>&1)"
+  rc=$?
+  touch "$marker" 2>/dev/null || true
+
+  if [ "$rc" = "0" ]; then
+    _log "skill-regressions: pass (next check in ~7d)"
+    return 0
+  fi
+
+  _log "skill-regressions: FAIL rc=$rc — sending telegram alert"
+
+  # Telegram dispatch (mirrors agents/notifier.md pattern).
+  local cfg="$HOME/.we-forge/config.json"
+  if [ ! -f "$cfg" ]; then
+    _log "skill-regressions: config missing — alert skipped"
+    return 0
+  fi
+  local enabled token chat
+  enabled=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("telegram_enabled") is True)' "$cfg" 2>/dev/null)
+  token=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("telegram_token",""))' "$cfg" 2>/dev/null)
+  chat=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("telegram_chat_id",""))' "$cfg" 2>/dev/null)
+  if [ "$enabled" != "True" ] || [ -z "$token" ] || [ -z "$chat" ]; then
+    _log "skill-regressions: telegram disabled — alert logged but not sent"
+    return 0
+  fi
+
+  # Truncate to fit Telegram's 4096-char message cap (tail keeps the FAIL rows).
+  local body
+  body="🚨 we-forge skill-regressions FAIL (rc=$rc)
+──────────────────────────────
+$(printf '%s\n' "$out" | tail -40)
+
+(next check in ~7d; see /Users/.../we-forge/learning/skill-suggest-regressions.json
+ or run: we-forgectl skill-regressions --verbose)"
+
+  if curl -fsS --max-time 15 \
+       --data-urlencode "chat_id=$chat" \
+       --data-urlencode "text=$body" \
+       "https://api.telegram.org/bot$token/sendMessage" >/dev/null 2>&1; then
+    _log "skill-regressions: telegram alert sent"
+  else
+    _log "skill-regressions: telegram POST failed"
+  fi
 }
 
 _main
