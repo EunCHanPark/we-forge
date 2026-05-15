@@ -84,6 +84,7 @@ pub mod paths {
     pub fn heartbeats_dir() -> PathBuf { we_forge_home().join("heartbeats") }
     pub fn suggest_log()    -> PathBuf { we_forge_home().join("skill-suggestions.jsonl") }
     pub fn turns_log()      -> PathBuf { we_forge_home().join("turns.jsonl") }
+    pub fn synonym_candidates_log() -> PathBuf { we_forge_home().join("synonym-candidates.jsonl") }
     pub fn ecc_index_file() -> PathBuf { we_forge_home().join("ecc-index.json") }
     pub fn learning_data_dir() -> PathBuf { claude_home().join("learning/data") }
 

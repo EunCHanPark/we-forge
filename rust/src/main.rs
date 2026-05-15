@@ -162,6 +162,19 @@ enum Cmd {
         #[arg(long, default_value_t = 24)]
         hours: i64,
     },
+
+    /// Review unknown Korean tokens observed in weakly-matched prompts.
+    /// Source: ~/.we-forge/synonym-candidates.jsonl, populated by skill-suggest
+    /// when a Korean prompt scores < 5.0 with at least one Korean token NOT in
+    /// the ko↔en synonym dictionary.
+    SynonymCandidates {
+        /// Show only the top-N most frequent unknown tokens.
+        #[arg(long, default_value_t = 20)]
+        top: usize,
+        /// Restrict to entries logged within the last N hours (0 = all-time).
+        #[arg(long, default_value_t = 0)]
+        hours: i64,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -217,5 +230,6 @@ fn main() -> anyhow::Result<()> {
             session_id,
         } => cli::skill_suggest::run(&prompt, top, inject, log, &session_id),
         Cmd::SkillHits { hours } => cli::skill_hits::run(hours),
+        Cmd::SynonymCandidates { top, hours } => cli::synonym_candidates::run(top, hours),
     }
 }

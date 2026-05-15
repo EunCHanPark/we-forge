@@ -1156,6 +1156,62 @@ pub mod skill_suggest {
             });
     }
 
+    /// Extract Hangul runs from the prompt (≥2 syllables, deduped).
+    /// Unlike `tokenize`, this does NOT expand via synonym dict — we want
+    /// to see what Korean words appeared *raw* in the prompt.
+    fn extract_hangul_tokens(text: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut seen = HashSet::new();
+        let chars: Vec<char> = text.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            if ('\u{AC00}'..='\u{D7A3}').contains(&chars[i]) {
+                let start = i;
+                i += 1;
+                while i < chars.len() && ('\u{AC00}'..='\u{D7A3}').contains(&chars[i]) { i += 1; }
+                let ko: String = chars[start..i].iter().collect();
+                if ko.chars().count() >= 2 && !seen.contains(&ko) {
+                    seen.insert(ko.clone());
+                    out.push(ko);
+                }
+            } else {
+                i += 1;
+            }
+        }
+        out
+    }
+
+    /// Append a candidate row when we see Korean tokens not covered by
+    /// `KO_EN_SYNONYMS`, especially when the top match scored weakly. The
+    /// resulting jsonl feeds `we-forgectl synonym-candidates` so a human
+    /// can grow the dictionary deliberately. Logging is best-effort and
+    /// silently swallowed on error — we never want learning telemetry to
+    /// fail a hook injection.
+    fn log_synonym_candidate(
+        prompt: &str,
+        unknown_korean: &[String],
+        top_score: f64,
+        session_id: &str,
+    ) {
+        if unknown_korean.is_empty() { return; }
+        let _ = std::fs::create_dir_all(paths::we_forge_home());
+        let preview: String = prompt.chars().take(140).collect();
+        let rec = serde_json::json!({
+            "ts": now_iso(),
+            "session_id": session_id,
+            "prompt_hash": short_hash(prompt),
+            "prompt_preview": preview,
+            "unknown_korean": unknown_korean,
+            "top_score": top_score,
+        });
+        let _ = std::fs::OpenOptions::new().create(true).append(true)
+            .open(paths::synonym_candidates_log())
+            .and_then(|mut f| {
+                use std::io::Write;
+                writeln!(f, "{}", rec)
+            });
+    }
+
     // -----------------------------------------------------------------------
     // workflow_match — opt-in (cfg.workflow_suggest_enabled). Pattern-match
     // the prompt to ECC multi-agent workflow skills (`/santa-method`,
@@ -1488,6 +1544,22 @@ pub mod skill_suggest {
             if !suggestions.is_empty() {
                 log_suggestion(prompt, &suggestions, session_id);
             }
+            // Synonym learning loop: when the prompt has Korean tokens we
+            // don't have synonym coverage for AND the top suggestion is
+            // weak, log the unknown words so a human can grow the dict.
+            // Threshold: top_score < 5.0 catches "barely matched at all"
+            // cases (the canary-watch baseline before patches was 5.12).
+            let hangul = extract_hangul_tokens(prompt);
+            if !hangul.is_empty() {
+                let unknown: Vec<String> = hangul
+                    .into_iter()
+                    .filter(|ko| !KO_EN_SYNONYMS.iter().any(|(k, _)| *k == ko.as_str()))
+                    .collect();
+                let top_score = suggestions.first().map(|s| s.score).unwrap_or(0.0);
+                if !unknown.is_empty() && top_score < 5.0 {
+                    log_synonym_candidate(prompt, &unknown, top_score, session_id);
+                }
+            }
         }
         if inject {
             let mut lines = vec!["<system-reminder>".to_string()];
@@ -1627,6 +1699,98 @@ pub mod skill_hits {
                 println!("    {:3}  {}", n, slug);
             }
         }
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// synonym-candidates — surface unknown Korean tokens for ko↔en dict growth
+//
+// Reads ~/.we-forge/synonym-candidates.jsonl (written by skill-suggest when a
+// Korean prompt scores < 5.0 with at least one token outside KO_EN_SYNONYMS).
+// Groups by token, counts occurrences, prints top-N. Use this when deciding
+// which new ko→en mappings to add to learning/build_ecc_index.py + cli.rs.
+// ---------------------------------------------------------------------------
+
+pub mod synonym_candidates {
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::fs;
+
+    pub fn run(top: usize, hours: i64) -> Result<()> {
+        let cutoff_iso = if hours > 0 {
+            let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours);
+            cutoff.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+        } else {
+            String::new()  // empty string sorts < all real timestamps
+        };
+
+        let path = paths::synonym_candidates_log();
+        let text = match fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(_) => {
+                println!("synonym-candidates: no entries yet ({} not found)", path.display());
+                println!("                    skill-suggest writes here when a Korean prompt");
+                println!("                    scores < 5.0 with at least one unknown Korean token.");
+                return Ok(());
+            }
+        };
+
+        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        let mut total_rows = 0_usize;
+        let mut considered_rows = 0_usize;
+        let mut last_seen: BTreeMap<String, String> = BTreeMap::new();
+        let mut sample: BTreeMap<String, String> = BTreeMap::new();
+
+        for line in text.lines() {
+            if line.trim().is_empty() { continue; }
+            total_rows += 1;
+            let v: serde_json::Value = match serde_json::from_str(line) {
+                Ok(v) => v, Err(_) => continue,
+            };
+            let ts = v.get("ts").and_then(|x| x.as_str()).unwrap_or("");
+            if !cutoff_iso.is_empty() && ts < cutoff_iso.as_str() { continue; }
+            considered_rows += 1;
+            let preview = v.get("prompt_preview").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            if let Some(arr) = v.get("unknown_korean").and_then(|x| x.as_array()) {
+                for tok in arr {
+                    if let Some(s) = tok.as_str() {
+                        *counts.entry(s.to_string()).or_insert(0) += 1;
+                        last_seen.insert(s.to_string(), ts.to_string());
+                        sample.entry(s.to_string()).or_insert_with(|| preview.clone());
+                    }
+                }
+            }
+        }
+
+        if counts.is_empty() {
+            let window = if hours > 0 { format!("last {} h", hours) } else { "all time".to_string() };
+            println!("synonym-candidates: no unknown Korean tokens in window ({})", window);
+            println!("                    log rows scanned: {}, in window: {}", total_rows, considered_rows);
+            return Ok(());
+        }
+
+        let mut ranked: Vec<(String, usize)> = counts.into_iter().collect();
+        ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+
+        let window = if hours > 0 { format!("last {} h", hours) } else { "all time".to_string() };
+        println!("synonym-candidates: top {} unknown Korean tokens ({})",
+                 ranked.len().min(top), window);
+        println!("                    {} rows total / {} in window", total_rows, considered_rows);
+        println!();
+        for (i, (tok, n)) in ranked.iter().take(top).enumerate() {
+            let last = last_seen.get(tok).cloned().unwrap_or_default();
+            let sample_str = sample.get(tok).cloned().unwrap_or_default();
+            let sample_short: String = sample_str.chars().take(60).collect();
+            println!("  {:>2}. {:8}  ×{:<4}  last={}  e.g. {}",
+                     i + 1, tok, n,
+                     last.chars().take(19).collect::<String>(),
+                     sample_short);
+        }
+        println!();
+        println!("To add a mapping, edit BOTH:");
+        println!("  learning/build_ecc_index.py  _KO_EN_SYNONYMS");
+        println!("  rust/src/cli.rs              KO_EN_SYNONYMS  (then `cargo build --release` + install)");
         Ok(())
     }
 }
