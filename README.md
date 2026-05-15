@@ -64,7 +64,7 @@ audit trail. Every leveraged ECC skill is recorded in
 ```bash
 ARCH=$(uname -m); OS=$(uname | tr A-Z a-z)
 TRIPLE="${ARCH}-$([ "$OS" = darwin ] && echo apple-darwin || echo unknown-linux-gnu)"
-curl -fsSL https://github.com/EunCHanPark/we-forge/releases/download/v0.5.1/we-forgectl-${TRIPLE}.tar.gz | tar xz
+curl -fsSL https://github.com/EunCHanPark/we-forge/releases/download/v0.5.4/we-forgectl-${TRIPLE}.tar.gz | tar xz
 sudo mv we-forgectl-* /usr/local/bin/we-forgectl
 we-forgectl install
 ```
@@ -214,6 +214,35 @@ we-forgectl skill-hits
 # Toggle workflow-level suggestions (multi-agent patterns, opt-in)
 we-forgectl set-workflow-suggest on
 ```
+
+### Korean prompt support (v0.5.2+)
+
+Hangul-aware tokenizer (Python + Rust) extracts Korean syllable runs and
+expands them through a 72-entry ko↔en synonym dictionary. A Korean prompt
+matches English-only skill descriptions and vice-versa.
+
+```bash
+we-forgectl skill-suggest "배포 검증 회귀 테스트 모니터링"
+# → everything-claude-code:canary-watch  score=28.62
+#   overlap: deploy, monitor, verification, verify, 검증, 모니터링, 회귀
+```
+
+### Self-adaptation tools (v0.5.3+)
+
+```bash
+we-forgectl synonym-coverage     # supply-side: English tokens with no Korean alias
+we-forgectl synonym-candidates   # demand-side: Korean tokens users typed that we don't cover
+we-forgectl skill-regressions    # anchor-based ranking regression detector
+```
+
+`tick.sh` runs `skill-regressions` automatically every 7 days. On failure
+it sends a Telegram alert (mirrors the notifier agent pattern). Anti-spam:
+one alert per 7-day cycle even if the failure persists.
+
+`learning/skill-description-overrides.json` lets we-forge enrich a
+marketplace skill's description without editing the marketplace clone —
+plugin updates won't conflict. Each entry carries `upstream_pr` +
+`remove_when` for mechanical audit-out.
 
 ---
 

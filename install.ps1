@@ -26,10 +26,10 @@
 [CmdletBinding()]
 param(
     [string]$InstallDir       = "$env:USERPROFILE\.local\bin",
-    # Pinned to v0.5.1 explicitly. The release artifact at v0.5.1
+    # Pinned to v0.5.4 explicitly. The release artifact at v0.5.4
     # is the supported binary; bumping requires a deliberate Version override:
-    #   .\install.ps1 -Version v0.5.2
-    [string]$Version          = "v0.5.1",
+    #   .\install.ps1 -Version v0.5.5
+    [string]$Version          = "v0.5.4",
     [switch]$NoPathSetup,
     [switch]$NoServiceInstall,
     [switch]$EnableTelegram
