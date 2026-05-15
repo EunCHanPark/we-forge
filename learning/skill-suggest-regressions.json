@@ -97,6 +97,22 @@
       "min_score": 14.0,
       "baseline_score": 22.25,
       "notes": "Mixed prompt — 쿼리/최적화/인덱스 must reach postgres-patterns via synonym path."
+    },
+    {
+      "id": "en-tdd-workflow",
+      "prompt": "test driven development write tests first then implement",
+      "expect_top": "everything-claude-code:tdd-workflow",
+      "min_score": 14.0,
+      "baseline_score": 22.32,
+      "notes": "Anchored after the v0.5.3 description-override added test-first phrasing — previously this prompt resolved to claude-plugins-official:hook-development at score 14.69 (override fixed it 2026-05-15). If this regresses, check the tdd-workflow override entry didn't go stale or get removed before upstream caught up."
+    },
+    {
+      "id": "ko-design-system",
+      "prompt": "한국어 디자인 시스템 컴포넌트",
+      "expect_top": "everything-claude-code:design-system",
+      "min_score": 20.0,
+      "baseline_score": 32.32,
+      "notes": "Anchored after 디자인/시스템 were added to ko↔en synonym map AND design-system got a description override adding 'component / token / UI'. Previously resolved to angular-developer at 8.42 (fixed 2026-05-15). If this regresses, check either: (1) the synonym map dropped 디자인 or 시스템, OR (2) the design-system override is stale/missing."
     }
   ]
 }
