@@ -6,6 +6,66 @@ All notable changes to we-forge are documented in this file. Format follows
 
 ## [Unreleased]
 
+## [0.5.3] — 2026-05-15 | active ECC adaptation — coverage / candidates / regressions / weekly tick
+
+The companion release to 0.5.2. Where 0.5.2 made matching work for Korean
+prompts, 0.5.3 makes it **stay** working — two introspection tools surface
+ko↔en dictionary gaps from both directions, a regression-test fixture
+anchors known-good mappings, and `tick.sh` enforces the regression check
+once per 7 days with Telegram alerts on failure.
+
+### New features
+
+- **`we-forgectl synonym-coverage [--top N] [--min-skills N]`** (`f49ace2`).
+  Supply-side gap finder. Scans every marketplace skill in the index,
+  counts how many distinct skills use each English token, filters out
+  tokens already mapped from some Korean key (with over-generated plural /
+  -ing variants so "patterns" counts the same as "pattern"), and surfaces
+  high-frequency uncovered tokens. The output lists candidates for new
+  ko→en dictionary entries — a token appearing in many descriptions with
+  no Korean alias is a vector through which Korean prompts can silently
+  miss the right skill. Live results highlight `user (68)`, `design (20)`,
+  `architecture (18)`, `management (17)`, `production (17)` as top gaps.
+
+- **`we-forgectl skill-regressions [--verbose]`** (`9a354e6`). Anchor-based
+  regression detector. Reads `learning/skill-suggest-regressions.json`
+  (10 cases: 7 English, 2 Korean+English mix, 1 pure Korean) and asserts
+  each (prompt → expected top skill, min_score). Each case carries a
+  `baseline_score` (today's observed) and `min_score` (~65% of baseline —
+  leaves room for IDF drift but catches >35% degradation). Exits non-zero
+  on any failure, suitable for CI / `tick.sh` integration. A new public
+  wrapper `skill_suggest::rank_top1()` exposes the matcher to sibling
+  modules.
+
+- **Weekly automated regression check** (`f29cb81`). New `_run_skill_regressions_if_due()`
+  in `learning/tick.sh` runs the regression suite once per 7 days
+  (marker: `~/.we-forge/.last-skill-regressions`). On failure it sends a
+  Telegram alert mirroring the notifier agent's pattern (reads
+  `telegram_*` from `~/.we-forge/config.json`, no-op when disabled). The
+  marker is touched on every run regardless of rc — anti-spam, one alert
+  per cycle, not per tick. Runs after the orchestrator dispatch so a
+  regression-check failure cannot block pattern processing.
+
+### Changed
+
+- **install.sh** copies two more files into `~/.claude/learning/`:
+  `skill-description-overrides.json` (from 0.5.2) and
+  `skill-suggest-regressions.json` (new this release).
+
+### Migration
+
+None required beyond the standard binary rebuild on macOS:
+
+    cd rust && cargo build --release
+    cp target/release/we-forgectl ~/.local/bin/we-forgectl
+    codesign --force --sign - ~/.local/bin/we-forgectl
+    xattr -cr ~/.local/bin/we-forgectl
+
+To manually trigger the regression check between cycles:
+
+    we-forgectl skill-regressions             # one-shot, bypasses the 7-day cooldown
+    rm ~/.we-forge/.last-skill-regressions    # force next tick to re-run it
+
 ## [0.5.2] — 2026-05-15 | Korean-aware skill-suggest + description-override layer + supervisor
 
 ### New features
