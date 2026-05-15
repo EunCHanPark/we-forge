@@ -176,6 +176,8 @@ _copy "$REPO_DIR/learning/build-skill-index.sh"  "$CLAUDE_HOME/learning/build-sk
 _copy "$REPO_DIR/learning/migrate-memory.sh"     "$CLAUDE_HOME/learning/migrate-memory.sh"
 _copy "$REPO_DIR/learning/sequence_normalize.py" "$CLAUDE_HOME/learning/sequence_normalize.py"
 _copy "$REPO_DIR/learning/backfill_ecc_match.py" "$CLAUDE_HOME/learning/backfill_ecc_match.py"
+_copy "$REPO_DIR/learning/skill-description-overrides.json" "$CLAUDE_HOME/learning/skill-description-overrides.json"
+_copy "$REPO_DIR/learning/skill-suggest-regressions.json"   "$CLAUDE_HOME/learning/skill-suggest-regressions.json"
 
 # Dashboard (KPI server + TUI logic) — needed by `we-forgectl report` and dashboard cmd.
 _copy "$REPO_DIR/dashboard/dashboard.py"         "$CLAUDE_HOME/dashboard/dashboard.py"

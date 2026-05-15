@@ -1,0 +1,102 @@
+{
+  "_README": [
+    "skill-suggest-regressions.json — anchor pairs for ranking regression detection.",
+    "",
+    "Each case asserts that a prompt MUST surface a specific skill as top-1 with",
+    "a score >= min_score. Run via:",
+    "    we-forgectl skill-regressions",
+    "Exit code is non-zero if any case fails — wire into CI or tick.sh.",
+    "",
+    "Calibration rules:",
+    "  - min_score = ~65% of current baseline. Leaves room for marketplace IDF drift",
+    "    without false-positive alarms, but catches a >35% degradation.",
+    "  - Each case carries `baseline_score` for audit so future tuners see the gap",
+    "    between asserted floor and what's observed today.",
+    "  - When upstream marketplace changes shift baselines, edit min_score deliberately;",
+    "    don't blanket-rebaseline — that defeats the purpose of regression detection.",
+    "",
+    "Two languages, two roles each (covering both tokenization paths):",
+    "  - 4 English-only prompts (control: ASCII tokenizer + IDF)",
+    "  - 3 Korean+English mix prompts (mixed-path: Hangul tokenizer + synonym expand)",
+    "  - 2 pure-Korean prompts (Korean-only: synonym expansion as sole bridge)"
+  ],
+
+  "cases": [
+    {
+      "id": "en-deploy-verify",
+      "prompt": "verify deployed URL endpoint SSE static asset",
+      "expect_top": "everything-claude-code:canary-watch",
+      "min_score": 15.0,
+      "baseline_score": 23.97,
+      "notes": "English deploy/verify path → canary-watch."
+    },
+    {
+      "id": "mix-stripe-billing",
+      "prompt": "stripe subscription billing customer refund",
+      "expect_top": "everything-claude-code:customer-billing-ops",
+      "min_score": 20.0,
+      "baseline_score": 30.70,
+      "notes": "Stripe domain anchor — billing/refund/subscription must hit customer-billing-ops."
+    },
+    {
+      "id": "en-postgres",
+      "prompt": "PostgreSQL query optimization indexing",
+      "expect_top": "everything-claude-code:postgres-patterns",
+      "min_score": 7.0,
+      "baseline_score": 11.79,
+      "notes": "Lower min_score — short technical prompt, IDF doesn't pile up."
+    },
+    {
+      "id": "en-docker",
+      "prompt": "docker compose container orchestration",
+      "expect_top": "everything-claude-code:docker-patterns",
+      "min_score": 20.0,
+      "baseline_score": 32.16
+    },
+    {
+      "id": "en-article-writing",
+      "prompt": "markdown article writing blog post tutorial",
+      "expect_top": "everything-claude-code:article-writing",
+      "min_score": 16.0,
+      "baseline_score": 25.58
+    },
+    {
+      "id": "en-kotlin-coroutines",
+      "prompt": "Kotlin coroutines flow Android",
+      "expect_top": "everything-claude-code:kotlin-coroutines-flows",
+      "min_score": 15.0,
+      "baseline_score": 23.24
+    },
+    {
+      "id": "en-git-workflow",
+      "prompt": "git workflow branch commit hygiene",
+      "expect_top": "everything-claude-code:git-workflow",
+      "min_score": 18.0,
+      "baseline_score": 28.55
+    },
+    {
+      "id": "ko-deploy-verify",
+      "prompt": "배포 검증 회귀 테스트 모니터링",
+      "expect_top": "everything-claude-code:canary-watch",
+      "min_score": 18.0,
+      "baseline_score": 28.62,
+      "notes": "Pure Korean — exercises Hangul tokenizer + ko↔en synonym expansion end-to-end. If this breaks, either the tokenizer or the synonym map regressed."
+    },
+    {
+      "id": "ko-stripe-billing",
+      "prompt": "Stripe 결제 환불 구독",
+      "expect_top": "everything-claude-code:customer-billing-ops",
+      "min_score": 16.0,
+      "baseline_score": 26.34,
+      "notes": "Mixed prompt — Korean tokens 결제/환불 plus English Stripe/구독→subscription synonym."
+    },
+    {
+      "id": "ko-postgres",
+      "prompt": "PostgreSQL 쿼리 최적화 인덱스",
+      "expect_top": "everything-claude-code:postgres-patterns",
+      "min_score": 14.0,
+      "baseline_score": 22.25,
+      "notes": "Mixed prompt — 쿼리/최적화/인덱스 must reach postgres-patterns via synonym path."
+    }
+  ]
+}

@@ -188,6 +188,17 @@ enum Cmd {
         #[arg(long, default_value_t = 3)]
         min_skills: usize,
     },
+
+    /// Run anchor-based regression tests against skill-suggest ranking.
+    /// Reads learning/skill-suggest-regressions.json (or installed copy) and
+    /// asserts each (prompt → expected top skill, min_score). Exits non-zero
+    /// on failure so CI / tick.sh can alert on marketplace drift or tokenizer
+    /// regressions.
+    SkillRegressions {
+        /// Print PASS rows as well (default: only FAIL rows are verbose).
+        #[arg(long)]
+        verbose: bool,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -245,5 +256,6 @@ fn main() -> anyhow::Result<()> {
         Cmd::SkillHits { hours } => cli::skill_hits::run(hours),
         Cmd::SynonymCandidates { top, hours } => cli::synonym_candidates::run(top, hours),
         Cmd::SynonymCoverage { top, min_skills } => cli::synonym_coverage::run(top, min_skills),
+        Cmd::SkillRegressions { verbose } => cli::skill_regressions::run(verbose),
     }
 }
