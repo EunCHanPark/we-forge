@@ -6,6 +6,100 @@ All notable changes to we-forge are documented in this file. Format follows
 
 ## [Unreleased]
 
+## [0.5.6] — 2026-05-16 | repo hygiene release — module split, tokenizer tests, regression rebase
+
+A consolidation release surfaced by a `repo-scan` audit on 2026-05-16.
+Zero feature work; every change is internal hygiene that makes future
+work cheaper. Originally five audit findings (R1–R5); four are now
+resolved (R1 partial — tokenizer parity locked, but daemon/service
+remain untested), one was already healthy (R5 — no embedded
+third-party libs).
+
+### Changed
+
+- **`rust/src/cli.rs` split** (`0a110d5`). The 2,072-LOC subcommand
+  monolith that was ~52% of the Rust crate is now a 44-line router that
+  declares 21 per-subcommand files under `rust/src/cli/`. Mechanical
+  move; behavior is byte-identical (verified via `cargo build --release`
+  + identical `--help` surface).
+
+- **`rust/src/cli/skill_suggest.rs` semantic sub-split** (`7bb3902`).
+  After the cli.rs split, skill_suggest.rs was the last 752-LOC file
+  in the crate. It now lives under `rust/src/cli/skill_suggest/` with
+  one file per responsibility:
+
+      mod.rs              run() entry + pub re-exports
+      tokenize.rs         STOPWORDS, KO_EN_SYNONYMS, tokenize() + tests
+      rank.rs             IDF-weighted scoring + rank_top1
+      logging.rs          turn / suggestion / synonym-candidate JSONL
+      synonym_telemetry   Hangul extraction + unknown-token capture
+      workflow.rs         WfRule + WORKFLOW_RULES + workflow_match
+
+  External surface narrowed to three names — `run`, `rank_top1`,
+  `KO_EN_SYNONYMS` — matching the actual use sites in `main.rs`,
+  `skill_regressions.rs`, and `synonym_coverage.rs`. Everything else
+  is `pub(super)` or private.
+
+- **`scripts/we-forgectl` (Python) marked deprecated** (`9ebfa9b`).
+  Docstring callout + README "no Rust toolchain" path callout. The
+  Python single-file CLI receives bug-fixes only until v0.6.0, at
+  which point it will be removed; new features go to `rust/src/` only.
+
+- **`skill-suggest-regressions.json` rebased for marketplace shift**
+  (`55ef028`). The `knowledge-work-plugins` marketplace plugin added
+  205 skills since the prior baselines (corpus 410 → 458), dropping
+  every term's IDF and introducing new domain neighbors. Per the file's
+  own _README rule ("don't blanket-rebaseline — that defeats the
+  purpose of regression detection"), only the cases where top-1 is
+  still semantically correct were updated:
+
+      ko-postgres         floor 14.0 → 8.0 (pure IDF rebaseline)
+      ko-design-system    expect_top vendor-swapped to the new
+                          knowledge-work-plugins:design-system winner
+                          (equal-domain duplicate)
+
+  Three cases (`en-deploy-verify`, `ko-deploy-verify`,
+  `en-tdd-workflow`) were left as documented known regressions —
+  their `notes` fields spell out the required description-override
+  fix; rebaselining them would erase the regression signal.
+
+### Added
+
+- **Tokenizer regression suites** (`2c46d9c`). Pins current observable
+  behavior of both `tokenize()` implementations against the same
+  anchor inputs:
+
+      rust/src/cli/skill_suggest/tokenize.rs   #[cfg(test)]   9 cases
+      learning/tests/test_tokenize.py          unittest      11 cases
+
+  The two suites intentionally do NOT assert Rust↔Python identity —
+  Python emits compound + parts and preserves raw tokens, Rust emits
+  one concatenated token after suffix stripping. Both sides are
+  individually pinned so unintentional drift on either side fails on
+  commit, not weeks later when a user notices a missed match.
+
+  `verify.sh` section 8 now runs both suites; final tally 22/22 pass.
+
+### Removed
+
+- **`install.ps1.wsl-fallback.bak`** (`e4801d9`). The April 24 backup
+  file from the original WSL fallback experiment. Live `install.ps1`
+  has long since absorbed the relevant logic; the .bak file was just
+  noise at the repo root.
+
+### Migration
+
+If you maintain a local fork of `~/.local/bin/we-forgectl`, rebuilding
+is recommended (no behavior change, but the version field bumps to
+0.5.6 for tracking and the binary embeds the refactored module layout):
+
+    cd rust && cargo build --release
+    cp target/release/we-forgectl ~/.local/bin/we-forgectl
+    codesign --force --sign - ~/.local/bin/we-forgectl
+    xattr -cr ~/.local/bin/we-forgectl
+
+No agent / command / hook changes — no `~/.claude/` sync needed.
+
 ## [0.5.5] — 2026-05-15 | skill-finder agent — LLM fallback for skill resolution
 
 Fills the architectural gap surfaced during v0.5.4: we-forge had agents
