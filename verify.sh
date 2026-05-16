@@ -142,7 +142,32 @@ else
   _fail "$CLAUDE_HOME/settings.json missing"
 fi
 
-_section "8. Scheduler (informational)"
+_section "8. Tokenizer parity suites"
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Python side — runs straight from the checkout, no install needed.
+if [ -f "$REPO_DIR/learning/tests/test_tokenize.py" ]; then
+  if (cd "$REPO_DIR" && python3 -m unittest learning.tests.test_tokenize) >/dev/null 2>&1; then
+    _pass "python tokenizer tests (learning/tests/test_tokenize.py)"
+  else
+    _fail "python tokenizer tests failed" \
+      "run: cd $REPO_DIR && python3 -m unittest learning.tests.test_tokenize -v"
+  fi
+else
+  _warn "learning/tests/test_tokenize.py not present — skipping"
+fi
+# Rust side — only if a checkout with the crate is present.
+if [ -f "$REPO_DIR/rust/Cargo.toml" ] && command -v cargo >/dev/null 2>&1; then
+  if (cd "$REPO_DIR/rust" && cargo test --quiet tokenizer) >/dev/null 2>&1; then
+    _pass "rust tokenizer tests (cargo test tokenizer)"
+  else
+    _fail "rust tokenizer tests failed" \
+      "run: cd $REPO_DIR/rust && cargo test tokenizer"
+  fi
+else
+  _warn "cargo or rust/ not available — skipping rust tokenizer tests"
+fi
+
+_section "9. Scheduler (informational)"
 case "$(uname -s)" in
   Darwin)
     if launchctl list 2>/dev/null | grep -q "we-forge"; then
