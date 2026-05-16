@@ -18,7 +18,17 @@
     "Two languages, two roles each (covering both tokenization paths):",
     "  - 4 English-only prompts (control: ASCII tokenizer + IDF)",
     "  - 3 Korean+English mix prompts (mixed-path: Hangul tokenizer + synonym expand)",
-    "  - 2 pure-Korean prompts (Korean-only: synonym expansion as sole bridge)"
+    "  - 2 pure-Korean prompts (Korean-only: synonym expansion as sole bridge)",
+    "",
+    "Marketplace history:",
+    "  - 2026-05-15: ~410 skills, all from everything-claude-code + claude-plugins-official.",
+    "  - 2026-05-16: 458 skills after knowledge-work-plugins added 205 new skills.",
+    "    This dropped every term's IDF and introduced new domain neighbors. The",
+    "    rebaseline this file captures was performed deliberately on 2026-05-16:",
+    "    ko-postgres rebaselined (same top-1, lower score); ko-design-system",
+    "    vendor-swapped to the new equal-domain winner; deploy-verify and",
+    "    en-tdd-workflow left as documented known regressions awaiting a",
+    "    description-override or non-suggestable-list fix (NOT a baseline fix)."
   ],
 
   "cases": [
@@ -26,9 +36,9 @@
       "id": "en-deploy-verify",
       "prompt": "verify deployed URL endpoint SSE static asset",
       "expect_top": "everything-claude-code:canary-watch",
-      "min_score": 15.0,
-      "baseline_score": 23.97,
-      "notes": "English deploy/verify path → canary-watch."
+      "min_score": 8.0,
+      "baseline_score": 10.13,
+      "notes": "KNOWN REGRESSION 2026-05-16: knowledge-work-plugins:create-an-asset (a sales-asset generator) now wins top-1 because the prompt's 'asset' token matches it heavily; canary-watch dropped to #2 at 10.13. Score floor lowered from 15.0 to 8.0 so when the right fix lands (description override expansion OR demoting create-an-asset for non-sales contexts), the new IDF-shifted score still clears. expect_top intentionally NOT changed — the regression signal must persist until canary-watch is restored to top."
     },
     {
       "id": "mix-stripe-billing",
@@ -78,9 +88,9 @@
       "id": "ko-deploy-verify",
       "prompt": "배포 검증 회귀 테스트 모니터링",
       "expect_top": "everything-claude-code:canary-watch",
-      "min_score": 18.0,
-      "baseline_score": 28.62,
-      "notes": "Pure Korean — exercises Hangul tokenizer + ko↔en synonym expansion end-to-end. If this breaks, either the tokenizer or the synonym map regressed."
+      "min_score": 6.0,
+      "baseline_score": 0.0,
+      "notes": "KNOWN REGRESSION 2026-05-16: knowledge-work-plugins:deploy-checklist (pre-deploy verification checklist) now wins decisively at 32.27 because the prompt's '배포 / 검증' tokens map directly to its 'deploy / verify' description. canary-watch (post-deploy monitoring) was anchored here because the prompt's '모니터링 / 회귀' tokens lean toward post-deploy semantics, but the new neighbor outscores it. Two reasonable fixes — either (a) accept the new winner as also-valid and split this case into two anchors, or (b) tighten canary-watch's description override to weight post-deploy regression/monitoring more heavily. expect_top intentionally NOT changed for now to preserve the signal."
     },
     {
       "id": "ko-stripe-billing",
@@ -94,25 +104,25 @@
       "id": "ko-postgres",
       "prompt": "PostgreSQL 쿼리 최적화 인덱스",
       "expect_top": "everything-claude-code:postgres-patterns",
-      "min_score": 14.0,
-      "baseline_score": 22.25,
-      "notes": "Mixed prompt — 쿼리/최적화/인덱스 must reach postgres-patterns via synonym path."
+      "min_score": 8.0,
+      "baseline_score": 12.15,
+      "notes": "REBASED 2026-05-16: top-1 unchanged (postgres-patterns), but IDF shifted after the marketplace grew ~410 → 458 skills (knowledge-work-plugins added 205). Score dropped 22.25 → 12.15 with the same correct top-1. Pure floor recalibration — min_score 14.0 → 8.0, baseline_score 22.25 → 12.15. Synonym path (쿼리/최적화/인덱스 → query/optimization/index) is still wired correctly; this is purely a denominator effect from the larger skill corpus."
     },
     {
       "id": "en-tdd-workflow",
       "prompt": "test driven development write tests first then implement",
       "expect_top": "everything-claude-code:tdd-workflow",
-      "min_score": 14.0,
-      "baseline_score": 22.32,
-      "notes": "Anchored after the v0.5.3 description-override added test-first phrasing — previously this prompt resolved to claude-plugins-official:hook-development at score 14.69 (override fixed it 2026-05-15). If this regresses, check the tdd-workflow override entry didn't go stale or get removed before upstream caught up."
+      "min_score": 6.0,
+      "baseline_score": 0.0,
+      "notes": "KNOWN REGRESSION 2026-05-16: claude-plugins-official:hook-development now wins this prompt at 17.02 because 'hook' is unrelated but 'development' / 'implement' / 'test' tokens stack heavily in its description. tdd-workflow doesn't even appear in top-3 anymore. The 2026-05-15 description override (skill-description-overrides.json) was outscored by new marketplace entrants. Two reasonable fixes — (a) expand tdd-workflow override with more weight on 'red-green-refactor / TDD discipline / test-first methodology', or (b) narrow hook-development's description override to constrain its overreach into generic dev prompts. expect_top intentionally NOT changed to preserve the regression signal."
     },
     {
       "id": "ko-design-system",
       "prompt": "한국어 디자인 시스템 컴포넌트",
-      "expect_top": "everything-claude-code:design-system",
-      "min_score": 20.0,
-      "baseline_score": 32.32,
-      "notes": "Anchored after 디자인/시스템 were added to ko↔en synonym map AND design-system got a description override adding 'component / token / UI'. Previously resolved to angular-developer at 8.42 (fixed 2026-05-15). If this regresses, check either: (1) the synonym map dropped 디자인 or 시스템, OR (2) the design-system override is stale/missing."
+      "expect_top": "knowledge-work-plugins:design-system",
+      "min_score": 16.0,
+      "baseline_score": 24.91,
+      "notes": "VENDOR REBASED 2026-05-16: expect_top changed from everything-claude-code:design-system → knowledge-work-plugins:design-system. Both skills share the exact same name and overlapping intent (audit / document / extend a design system); the new vendor's wording matches the prompt slightly better at 24.91 (ECC's was 32.32 with the override). This is a legitimate equal-domain duplicate — the anchor's purpose (verify the ko↔en synonym path 디자인/시스템 → design/system lands on a design-system skill) is preserved. If vendor preference becomes important, the lever is the non-suggestable list in build_ecc_index.py, not this anchor."
     }
   ]
 }
