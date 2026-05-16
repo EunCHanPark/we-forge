@@ -1,6 +1,20 @@
 #!/usr/bin/env python3
 """we-forgectl — we-forge service & operations control
 
+⚠️  DEPRECATED (2026-05-16) — kept for offline / Python-only install paths.
+
+The active implementation is the Rust port at `rust/` (crate name
+`we-forgectl`, version 0.5.5+). Pre-built binaries ship via GitHub Releases
+and are what `install.sh --release` / `install.ps1` actually drop into
+`~/.local/bin`. This Python file is retained only as a fallback for
+environments without the Rust toolchain or release binary access.
+
+  - Active source of truth: `rust/src/` (cli.rs, daemon.rs, service.rs, …)
+  - This file: receives no new features; bug-fixes only if the Rust binary
+    cannot be used (e.g. unsupported platform).
+  - Scheduled for removal: v0.6.0 once `install.sh` defaults to the Rust
+    artifact unconditionally.
+
 Single-file CLI implementing:
   - install / uninstall / start / stop / restart / status
   - run (foreground) / daemon (long-running loop)

@@ -100,10 +100,15 @@ iwr -useb https://raw.githubusercontent.com/EunCHanPark/we-forge/main/install.ps
 ```
 
 > **WSL2 fallback** (legacy): if you prefer the WSL-based install, see
-> [WSL-SETUP.md](WSL-SETUP.md). The previous `install.ps1` is preserved
-> as `install.ps1.wsl-fallback.bak` after running this installer.
+> [WSL-SETUP.md](WSL-SETUP.md).
 
 ### From a clone — Python (no Rust toolchain)
+
+> ⚠️ **Legacy path — deprecated 2026-05-16.** `scripts/we-forgectl` is the
+> original single-file Python CLI and is retained only for environments
+> without access to the Rust release binary (e.g. air-gapped hosts, exotic
+> CPUs). New features land exclusively in `rust/src/`; this Python script
+> receives bug-fixes only and is scheduled for removal in v0.6.0.
 
 ```bash
 git clone https://github.com/EunCHanPark/we-forge.git
